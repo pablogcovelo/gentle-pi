@@ -641,6 +641,13 @@ test("parseOpenCodeGoUsage rejects invalid required windows and omits invalid op
 	assert.deepEqual(usage?.limits[0].windows.map((window) => window.usedPercent), [0, 100]);
 });
 
+test("OpenCode Go rejects impossible calendar reset days in required and optional windows", () => {
+	const valid = { status: "ok", percent: 25, resetsAt: "2026-09-01T12:00:00.000Z" };
+	const invalid = { ...valid, resetsAt: "2026-02-29T12:00:00.000Z" };
+	assert.equal(parseOpenCodeGoUsage({ usage: { rolling: invalid } }, NOW), undefined);
+	assert.deepEqual(parseOpenCodeGoUsage({ usage: { rolling: valid, weekly: invalid } }, NOW)?.limits[0].windows.map((window) => window.label), ["5h"]);
+});
+
 // Targeted providers: the session's own provider plus every provider the
 // active profile's subagent routing names. A qualified ref ("provider/id")
 // resolves directly; a bare model id resolves only through the registry

@@ -303,7 +303,7 @@ function parseOpenCodeGoWindow(value: unknown, label: string, windowSeconds: num
 	if (raw.status !== "ok" || !Number.isInteger(raw.percent) || (raw.percent as number) < 0 || (raw.percent as number) > 100) return undefined;
 	if (typeof raw.resetsAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(raw.resetsAt)) return undefined;
 	const resetAt = Date.parse(raw.resetsAt);
-	if (!Number.isFinite(resetAt)) return undefined;
+	if (!Number.isFinite(resetAt) || new Date(resetAt).toISOString().slice(0, 19) !== raw.resetsAt.slice(0, 19)) return undefined;
 	return { label, usedPercent: raw.percent as number, windowSeconds, resetAt };
 }
 
