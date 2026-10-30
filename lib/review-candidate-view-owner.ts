@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { conservativeOwnerDeathProofV1 } from "./review-lock.ts";
 
@@ -208,19 +208,19 @@ function enforcePrivateWindowsDacl(path: string, identity: WindowsAclIdentity = 
 	assertPrivateWindowsDacl(path, "directory", true, identity);
 }
 
-function privateWindowsDacl(path: string, kind: WindowsObjectKind, protectedDacl: boolean, enforce = false): void {
+function privateWindowsDacl(path: string, kind: WindowsObjectKind, protectedDacl: boolean, enforce = false, windowsIdentity?: WindowsAclIdentity): void {
 	if (testingWindowsAclAuthority !== undefined) return testingWindowsAclAuthority(path);
-	if (enforce) enforcePrivateWindowsDacl(path);
-	else assertPrivateWindowsDacl(path, kind, protectedDacl);
+	if (enforce) enforcePrivateWindowsDacl(path, windowsIdentity);
+	else assertPrivateWindowsDacl(path, kind, protectedDacl, windowsIdentity);
 }
 
-function privateWindowsCandidateOwnerBoundary(commonDir: string, enforce = false): void {
+function privateWindowsCandidateOwnerBoundary(commonDir: string, enforce = false, windowsIdentity?: WindowsAclIdentity): void {
 	const boundary = [commonDir, join(commonDir, "gentle-ai"), join(commonDir, "gentle-ai", "candidate-views")];
 	if (testingWindowsAclAuthority !== undefined) {
 		for (const path of boundary) testingWindowsAclAuthority(path);
 		return;
 	}
-	const identity = windowsAclIdentity();
+	const identity = windowsIdentity ?? windowsAclIdentity();
 	if (enforce) {
 		for (const path of boundary) validatePrivateWindowsOwner(windowsOwnerSid(path, "directory"), identity.user);
 		for (const path of boundary) enforcePrivateWindowsDacl(path, identity);
@@ -259,24 +259,68 @@ export function samePath(path: string, expected: string, platform: NodeJS.Platfo
 	return canonical(path) === canonical(expected);
 }
 
-function directory(path: string, privateMode = false, platform: NodeJS.Platform = process.platform): string {
-	const stat = lstatSync(path);
-	const uid = process.getuid?.();
-	if (!stat.isDirectory() || stat.isSymbolicLink() || !samePath(realpathSync(path), path, platform) ||
-		(privateMode && platform !== "win32" && (uid === undefined || stat.uid !== uid || (stat.mode & 0o077) !== 0))) throw new Error("Unsafe candidate owner directory");
+export class PosixCandidateOwnerParentPrivacyError extends Error {
+	constructor() {
+		super("Candidate owner parent privacy check failed");
+		this.name = "PosixCandidateOwnerParentPrivacyError";
+	}
+}
+
+export class PosixCandidateOwnerParentChmodIneffectiveError extends Error {
+	constructor() {
+		super("Candidate owner parent POSIX chmod attestation is ineffective");
+		this.name = "PosixCandidateOwnerParentChmodIneffectiveError";
+	}
+}
+
+function posixPrivateModeProbe(path: string): boolean {
+	const probe = join(path, `.gentle-ai-chmod-probe-${randomUUID()}`);
+	try {
+		mkdirSync(probe, { mode: 0o700 });
+		return (lstatSync(probe).mode & 0o777) === 0o700;
+	} catch {
+		return true;
+	} finally {
+		try { rmdirSync(probe); } catch {}
+	}
+}
+
+function directory(path: string, privateMode = false, platform: NodeJS.Platform = process.platform, classifyParentPrivacy = false): string {
+	// 64-bit dev/ino may collide as Numbers; validate metadata and identity from one exact observation.
+	const stat = lstatSync(path, { bigint: true });
+	if (!stat.isDirectory() || stat.isSymbolicLink() || !samePath(realpathSync(path), path, platform)) throw new Error("Unsafe candidate owner directory");
+	if (privateMode && platform !== "win32") {
+		const uid = process.getuid?.();
+		if (uid === undefined) throw new Error("Unsafe candidate owner directory");
+		if (stat.uid !== BigInt(uid) || (stat.mode & 0o077n) !== 0n) {
+			if (classifyParentPrivacy) {
+				if (stat.uid === BigInt(uid) && (stat.mode & 0o077n) !== 0n && !posixPrivateModeProbe(path)) throw new PosixCandidateOwnerParentChmodIneffectiveError();
+				throw new PosixCandidateOwnerParentPrivacyError();
+			}
+			throw new Error("Unsafe candidate owner directory");
+		}
+	}
 	if (privateMode && platform === "win32") privateWindowsDacl(path, "directory", true);
 	return `${stat.dev}:${stat.ino}`;
 }
 
-export function assertCandidateOwnerParent(commonDir: string, platform: NodeJS.Platform = process.platform): string {
+function checkedCandidateOwnerParent(commonDir: string, platform: NodeJS.Platform): { parent: string; windowsIdentity?: WindowsAclIdentity } {
 	directory(commonDir, false, platform);
 	const control = join(commonDir, "gentle-ai");
 	directory(control, false, platform);
 	const parent = join(commonDir, "gentle-ai", "candidate-views");
-	directory(parent, false, platform);
-	if (platform === "win32") privateWindowsCandidateOwnerBoundary(commonDir);
-	else directory(parent, true, platform);
-	return parent;
+	if (platform === "win32") {
+		directory(parent, false, platform);
+		const windowsIdentity = testingWindowsAclAuthority === undefined ? windowsAclIdentity() : undefined;
+		privateWindowsCandidateOwnerBoundary(commonDir, false, windowsIdentity);
+		return { parent, windowsIdentity };
+	}
+	directory(parent, true, platform, true);
+	return { parent };
+}
+
+export function assertCandidateOwnerParent(commonDir: string, platform: NodeJS.Platform = process.platform): string {
+	return checkedCandidateOwnerParent(commonDir, platform).parent;
 }
 
 export function prepareCandidateOwnerParent(commonDir: string, platform: NodeJS.Platform = process.platform): string {
@@ -292,12 +336,13 @@ export function prepareCandidateOwnerParent(commonDir: string, platform: NodeJS.
 	return assertCandidateOwnerParent(commonDir, platform);
 }
 
-function regular(path: string, privateMode = false, platform: NodeJS.Platform = process.platform): string {
-	const stat = lstatSync(path);
+function regular(path: string, privateMode = false, platform: NodeJS.Platform = process.platform, windowsIdentity?: WindowsAclIdentity): string {
+	// Keep 64-bit identity exact without a second stat lookup racing the privacy checks.
+	const stat = lstatSync(path, { bigint: true });
 	const uid = process.getuid?.();
-	if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !samePath(realpathSync(path), path, platform) || stat.size > 16384 ||
-		(privateMode && platform !== "win32" && (uid === undefined || stat.uid !== uid || (stat.mode & 0o777) !== 0o600))) throw new Error("Unsafe candidate owner file");
-	if (privateMode && platform === "win32") privateWindowsDacl(path, "file", false);
+	if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n || !samePath(realpathSync(path), path, platform) || stat.size > 16384n ||
+		(privateMode && platform !== "win32" && (uid === undefined || stat.uid !== BigInt(uid) || (stat.mode & 0o777n) !== 0o600n))) throw new Error("Unsafe candidate owner file");
+	if (privateMode && platform === "win32") privateWindowsDacl(path, "file", false, false, windowsIdentity);
 	return `${stat.dev}:${stat.ino}`;
 }
 
@@ -309,27 +354,27 @@ function syncDirectory(path: string): void {
 	try { fsyncSync(fd); } finally { closeSync(fd); }
 }
 
-function removeExactPrivateFile(path: string, identity: string, platform: NodeJS.Platform): void {
+function removeExactPrivateFile(path: string, identity: string, platform: NodeJS.Platform, windowsIdentity?: WindowsAclIdentity): void {
 	try {
-		if (regular(path, true, platform) !== identity) return;
+		if (regular(path, true, platform, windowsIdentity) !== identity) return;
 		unlinkSync(path);
 		syncDirectory(dirname(path));
 	} catch { /* An unproven or replaced file survives. */ }
 }
 
-function exclusiveFile(path: string, content: string, platform: NodeJS.Platform = process.platform, rollbackOnFailure = false): string {
+function exclusiveFile(path: string, content: string, platform: NodeJS.Platform = process.platform, rollbackOnFailure = false, windowsIdentity?: WindowsAclIdentity): string {
 	let identity: string | undefined;
 	try {
 		const fd = openSync(path, "wx", 0o600);
 		try {
-			identity = regular(path, true, platform);
+			identity = regular(path, true, platform, windowsIdentity);
 			writeFileSync(fd, content);
 			fsyncSync(fd);
 		} finally { closeSync(fd); }
 		syncDirectory(dirname(path));
 		return identity;
 	} catch (error) {
-		if (rollbackOnFailure && identity !== undefined) removeExactPrivateFile(path, identity, platform);
+		if (rollbackOnFailure && identity !== undefined) removeExactPrivateFile(path, identity, platform, windowsIdentity);
 		throw error;
 	}
 }
@@ -337,7 +382,10 @@ function exclusiveFile(path: string, content: string, platform: NodeJS.Platform 
 function markerPath(root: string): string { return `${root}.owner.json`; }
 
 export function createCandidateOwner(commonDir: string, root: string, platform: NodeJS.Platform = process.platform): CandidateViewOwner {
-	const parent = assertCandidateOwnerParent(commonDir, platform);
+	// Reuse only identity within this module-controlled synchronous creation.
+	// Owner/DACL observations stay fresh, including rollback. Nothing is retained
+	// across calls or passed into callback-based removal/sweeping operations.
+	const { parent, windowsIdentity } = checkedCandidateOwnerParent(commonDir, platform);
 	const uuid = basename(root);
 	if (!UUID.test(uuid) || root !== join(parent, uuid) || lstatSync(root, { throwIfNoEntry: false })) throw new Error("Unsafe candidate owner root");
 	const owner: CandidateViewOwner = { version: 1, uuid, token: randomUUID(), pid: process.pid, host: localHost(), root, commonDir };
@@ -345,11 +393,11 @@ export function createCandidateOwner(commonDir: string, root: string, platform: 
 	const marker = markerPath(root);
 	let markerIdentity: string | undefined;
 	try {
-		markerIdentity = exclusiveFile(marker, JSON.stringify(owner), platform, true);
+		markerIdentity = exclusiveFile(marker, JSON.stringify(owner), platform, true, windowsIdentity);
 		syncDirectory(dirname(parent));
 		syncDirectory(commonDir);
 	} catch (error) {
-		if (markerIdentity !== undefined) removeExactPrivateFile(marker, markerIdentity, platform);
+		if (markerIdentity !== undefined) removeExactPrivateFile(marker, markerIdentity, platform, windowsIdentity);
 		throw error;
 	}
 	return Object.freeze(owner);
@@ -443,6 +491,10 @@ export function removeCandidateOwner(owner: CandidateViewOwner, git: Git, makeWr
 }
 
 export function sweepCandidateOwners(commonDir: string, git: Git, makeWritable: (root: string) => void, platform: NodeJS.Platform = process.platform): void {
+	// Windows has no localHost() provenance, so dead() cannot authorize reclamation.
+	// Avoid synchronous ACL probes for a sweep that must preserve every owner anyway.
+	// Explicit creation, validation, and cleanup retain their full ownership checks.
+	if (platform === "win32") return;
 	try {
 		const parent = assertCandidateOwnerParent(commonDir, platform);
 		for (const name of readdirSync(parent)) {

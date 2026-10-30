@@ -16,6 +16,7 @@ import {
 	renderUsageBar,
 	renderUsagePanel,
 	SUPPORTED_USAGE_PROVIDERS,
+	usageScopeProviders,
 	UsageSourceRegistry,
 	USAGE_SOURCE_SCHEMA,
 	UsageStore,
@@ -120,6 +121,41 @@ test("parseCodexHeaders reads the SSE rate-limit headers when a provider sends t
 	assert.ok(usage);
 	assert.deepEqual(usage.limits[0].windows.map((w) => `${w.label}:${w.usedPercent}:${w.resetAt}`), ["5h:62:1788620161000", "week:31:1789206961000"]);
 	assert.equal(parseCodexHeaders({ "content-type": "text/event-stream" }, NOW), undefined);
+});
+
+test("parseCodexHeaders ignores windows without a valid duration instead of inventing 0m", () => {
+	for (const minutes of [undefined, "", " ", "0", "-1", "invalid", "300oops", "Infinity", "1e309"]) {
+		const headers: Record<string, string> = { "x-codex-primary-used-percent": "0" };
+		if (minutes !== undefined) headers["x-codex-primary-window-minutes"] = minutes;
+		assert.equal(parseCodexHeaders(headers, NOW), undefined, `minutes: ${String(minutes)}`);
+	}
+});
+
+test("parseCodexHeaders keeps genuine zero usage and only the valid provider windows", () => {
+	const usage = parseCodexHeaders({
+		"x-codex-primary-used-percent": "0",
+		"x-codex-primary-window-minutes": "0",
+		"x-codex-secondary-used-percent": "0",
+		"x-codex-secondary-window-minutes": "10080",
+	}, NOW);
+	assert.ok(usage);
+	assert.deepEqual(usage.limits[0].windows.map((w) => `${w.label}:${w.usedPercent}`), ["week:0"]);
+	assert.equal(renderUsageBar(usage, plainTheme), "codex week ▱▱▱▱▱▱▱▱ 0%");
+	assert.doesNotMatch(renderUsageBar(usage, plainTheme)!, /0m|5h/);
+});
+
+test("parseCodexUsage filters invalid numeric windows without inventing a five-hour quota", () => {
+	for (const seconds of [undefined, 0, -1, Number.NaN, Number.POSITIVE_INFINITY, "18000"]) {
+		const usage = parseCodexUsage({ rate_limit: {
+			primary_window: { used_percent: 0, limit_window_seconds: seconds },
+			secondary_window: { used_percent: 0, limit_window_seconds: 604_800 },
+		} }, NOW);
+		assert.deepEqual(usage.limits[0].windows.map((w) => `${w.label}:${w.usedPercent}`), ["week:0"], `seconds: ${String(seconds)}`);
+	}
+	for (const used of [undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+		assert.deepEqual(parseCodexUsage({ rate_limit: { primary_window: { used_percent: used, limit_window_seconds: 604_800 } } }, NOW).limits, []);
+	}
+	assert.deepEqual(parseCodexUsage({ rate_limit: { primary_window: { used_percent: 0, limit_window_seconds: 0 } } }, NOW).limits, []);
 });
 
 test("accountIdFromToken decodes the chatgpt account claim from an OAuth JWT", () => {
@@ -593,5 +629,86 @@ test("parseOpenCodeGoUsage maps required rolling and optional weekly/monthly API
 		"5h:25:1788264000000", "week:50:1788782400000", "month:75:1790856000000",
 	]);
 	assert.equal(parseOpenCodeGoUsage({ usage: { rolling: { percent: "25", resetsAt: "bad" } } }, NOW), undefined);
-	assert.equal(parseOpenCodeGoUsage({ usage: { rolling: { percent: 25, resetsAt: "2026-09-01T12:00:00.000Z" }, weekly: { percent: "bad", resetsAt: "bad" } } }, NOW)?.limits[0].windows.length, 1);
+	assert.equal(parseOpenCodeGoUsage({ usage: { rolling: { status: "ok", percent: 25, resetsAt: "2026-09-01T12:00:00.000Z" }, weekly: { status: "ok", percent: "bad", resetsAt: "bad" } } }, NOW)?.limits[0].windows.length, 1);
+});
+
+test("parseOpenCodeGoUsage rejects invalid required windows and omits invalid optional windows", () => {
+	const valid = { status: "ok", percent: 0, resetsAt: "2026-09-01T12:00:00.000Z" };
+	for (const payload of [null, [], { usage: null }, { usage: "bad" }, { usage: { rolling: null } }, { usage: { rolling: { ...valid, percent: 101 } } }, { usage: { rolling: { ...valid, status: "error" } } }, { usage: { rolling: { ...valid, resetsAt: "tomorrow" } } }]) {
+		assert.equal(parseOpenCodeGoUsage(payload, NOW), undefined);
+	}
+	const usage = parseOpenCodeGoUsage({ usage: { rolling: valid, weekly: { ...valid, percent: -1 }, monthly: { ...valid, percent: 100 } } }, NOW);
+	assert.deepEqual(usage?.limits[0].windows.map((window) => window.usedPercent), [0, 100]);
+});
+
+// Targeted providers: the session's own provider plus every provider the
+// active profile's subagent routing names. A qualified ref ("provider/id")
+// resolves directly; a bare model id resolves only through the registry
+// callback, so an ambiguous ref is dropped instead of guessed.
+
+test("usageScopeProviders targets the main provider and every qualified routing provider", () => {
+	assert.deepEqual(
+		usageScopeProviders("openai-codex", ["nan/glm5.3", "openai-codex/gpt-5.5", undefined], undefined),
+		["openai-codex", "nan"],
+	);
+});
+
+test("usageScopeProviders resolves bare model ids only through the registry callback", () => {
+	assert.deepEqual(usageScopeProviders(undefined, ["glm5.3"], (id) => (id === "glm5.3" ? "nan" : undefined)), ["nan"]);
+	assert.deepEqual(
+		usageScopeProviders(undefined, ["glm5.3", "mystery"], () => undefined),
+		[],
+		"an id the registry cannot resolve to exactly one provider is dropped, never guessed",
+	);
+});
+
+function scopePanel(usages: ProviderUsage[], providers: string[], failed: string[] = []): string[] {
+	return renderUsagePanel(usages, plainTheme, 100, NOW, { provider: "openai-codex" }, undefined, {
+		providers,
+		failed: new Set(failed),
+	});
+}
+
+test("renderUsagePanel draws the targeted scope in scope order with no-data and failed-fetch notes", () => {
+	const codex = parseCodexUsage(CODEX_PAYLOAD, NOW);
+	const nan = parseNanQuota(NAN_QUOTA, NOW);
+	const lines = scopePanel([nan, codex], ["openai-codex", "nan", "acme-cloud"], ["acme-cloud"]);
+	assert.match(lines[0], /^✿ openai-codex · pro/);
+	assert.match(lines.find((line) => line.startsWith("nan")) ?? "", /^nan · /, "a targeted provider with data renders like any other");
+	assert.match(lines.find((line) => line.startsWith("acme-cloud")) ?? "", /^acme-cloud · fetch failed · r to retry$/);
+});
+
+test("renderUsagePanel keeps a headers-only targeted provider pending, never a false failure", () => {
+	const pending = (providers: string[], failed: string[] = []) =>
+		renderUsagePanel([], plainTheme, 100, NOW, undefined, undefined, { providers, failed: new Set(failed) });
+	assert.deepEqual(
+		pending(["anthropic"]),
+		["anthropic · usage arrives with the first response"],
+	);
+	assert.deepEqual(
+		pending(["openai-codex"]),
+		["openai-codex · no usage yet · r to fetch"],
+		"an unattempted fetch still says pending, not failed",
+	);
+	assert.deepEqual(
+		pending(["openai-codex"], ["openai-codex"]),
+		["openai-codex · fetch failed · r to retry"],
+	);
+});
+
+test("renderUsagePanel never presents a provider outside the current scope after a profile switch", () => {
+	const codex = parseCodexUsage(CODEX_PAYLOAD, NOW);
+	const nan = parseNanQuota(NAN_QUOTA, NOW);
+	const lines = scopePanel([nan, codex], ["openai-codex"]);
+	assert.ok(lines.some((line) => line.startsWith("✿ openai-codex · pro")));
+	assert.equal(lines.some((line) => line.startsWith("nan ·")), false, "the previous profile's provider is not current scope");
+});
+
+test("renderUsagePanel renders the failure note beside a retained snapshot, and only after a real failure", () => {
+	const codex = parseCodexUsage(CODEX_PAYLOAD, NOW);
+	const afterFailure = scopePanel([codex], ["openai-codex"], ["openai-codex"]);
+	assert.match(afterFailure[0], /^✿ openai-codex · pro/, "the retained snapshot stays the provider's headline");
+	assert.match(afterFailure[1], /^ {2}codex week /, "the last good snapshot survives the failed refresh");
+	assert.ok(afterFailure.some((line) => /^ {2}fetch failed · r to retry$/.test(line)), "the failure is visible beside the retained snapshot");
+	assert.equal(scopePanel([codex], ["openai-codex"]).some((line) => line.includes("fetch failed")), false, "a provider whose latest refresh succeeded carries no failure note");
 });
