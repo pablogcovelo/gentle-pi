@@ -1919,7 +1919,7 @@ export default function gentleShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = p
 				usageScope = usageScopeFor(ctx);
 				if (discover) return undefined;
 			}
-			if (discover && apiKey) {
+			if (apiKey && (provider === CODEX_PROVIDER || provider === OPENCODE_GO_PROVIDER)) {
 				configuredUsageProviders.add(provider);
 				usageScope = usageScopeFor(ctx);
 			}

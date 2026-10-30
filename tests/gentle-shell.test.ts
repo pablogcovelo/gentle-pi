@@ -20,7 +20,7 @@ import { buildCommandPaletteGroups } from "../lib/command-palette-catalog.ts";
 import { CHANGE_STATUS, DIFF_MAX_BYTES, DIFF_MAX_LINES, DIFF_TOO_LARGE } from "../lib/shell-changes.ts";
 import { sidebarPart, sidebarState, type SidebarRail } from "../lib/shell-sidebar.ts";
 import { renderTodoCard } from "../lib/shell-todo.ts";
-import type { ShellBarTheme } from "../lib/shell-bar.ts";
+import { renderShellSidebarBar, type ShellBarTheme } from "../lib/shell-bar.ts";
 import { createGentleAiExtension } from "../extensions/gentle-ai.ts";
 import { decodeReviewStatusV3 } from "../lib/review-integration-v2.ts";
 import { REVIEW_SIDEBAR_EVENT } from "../lib/review-sidebar-state.ts";
@@ -284,12 +284,15 @@ test("buildShellBarModel reads session, model, and footer data", () => {
 	assert.deepEqual(built.statuses, ["MCP: 3 servers enabled"]);
 });
 
-test("buildShellBarModel treats OpenCode Go API-key usage as subscription-backed", () => {
+test("buildShellBarModel treats OpenCode Go API-key usage as subscription-backed", async () => {
 	const { pi } = fakePi();
 	const { ctx } = fakeContext({ oauth: false });
 	(ctx as unknown as { model: { provider: string } }).model.provider = "opencode-go";
 	const footerData = { getGitBranch: () => null, getExtensionStatuses: () => new Map(), getAvailableProviderCount: () => 1, onBranchChange: () => () => {} };
-	assert.equal(buildShellBarModel(pi, ctx, footerData).subscription, true);
+	const usage = await fetchOpenCodeGoUsage("go-key", fakeFetch(OPENCODE_GO_PAYLOAD).fetchFn, 0);
+	const model = buildShellBarModel(pi, ctx, footerData, { usage });
+	assert.equal(model.subscription, true);
+	assert.doesNotMatch(renderShellSidebarBar(model, plainTheme, 80).join("\n"), /Usage|opencode go/, "the Status sidebar never renders usage");
 });
 
 test("buildShellBarModel shortens the home directory and hides effort for non-reasoning models", () => {
@@ -5317,6 +5320,23 @@ test("configured Codex and OpenCode Go refresh independently while only active u
 	const panel = ui.overlayView!.render(100).map(stripAnsi).join("\n");
 	assert.match(panel, /openai-codex/);
 	assert.match(panel, /opencode-go/);
+	ui.closeOverlay?.();
+	await opened;
+});
+
+test("a configured OpenCode Go snapshot stays visible immediately after switching away", async () => {
+	const { pi, handlers, commands } = fakePi();
+	const { fetchFn } = fakeFetch(OPENCODE_GO_PAYLOAD);
+	gentleShell(pi, { GENTLE_PI_SHELL_CHANGES_WATCH_MS: "off" }, { fetch: fetchFn, now: () => 1_788_600_000_000 });
+	const { ctx, ui } = fakeContext({ availableProviders: ["opencode-go"], tokens: { "opencode-go": "go-key" } });
+	(ctx as unknown as { model: { provider: string } }).model.provider = "opencode-go";
+	await fire(handlers, "session_start", ctx);
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	(ctx as unknown as { model: { provider: string } }).model.provider = "openai-codex";
+	await fire(handlers, "agent_end", ctx);
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	const opened = commands.get("gentle:usage")!.handler("", ctx);
+	assert.match(ui.overlayView!.render(100).map(stripAnsi).join("\n"), /opencode-go · updated/);
 	ui.closeOverlay?.();
 	await opened;
 });
