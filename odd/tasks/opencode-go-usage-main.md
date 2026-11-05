@@ -1,5 +1,6 @@
 # OpenCode Go subscription usage on current main
 Branch: `feat/opencode-go-usage` (existing PR #1525 branch, merging current main `9ec634973b62c4b12a7a8a36218fc8f1725cad04`).
+Resync round 2: the subscription-usage UI changed again on main; merge `ffb191155` and re-home the feature (S5, T4-T7).
 Issue: Gentleman-Programming/gentle-shell#872; PR #1525; Engram: `odd/opencode-go-usage-main/tasks`.
 
 ## Specs
@@ -7,11 +8,16 @@ S1. "Add OpenCode Go (`opencode-go`) subscription-usage retrieval through its au
 S2. "Adaptamos la implementación a main y actualizamos la issue para limitar la visualización al encabezado y /gentle:usage". "The footer should continue to show only the active provider."
 S3. "revisa también los mensajes que ha dejado coderabbit en el PR por si son relevantes y requieren arreglo". Preserve the current main's bounded per-provider refresh and source precedence when adding OpenCode Go.
 S4. "quiero reabrir tanto la issue como el PR pero antes revisa que el código siga siendo válido con el estado actual del repo en la rama main". Update the issue's outdated sidebar language, reopen the issue and PR only after a verified candidate is on the existing PR branch; publishing is a separate explicit action.
+S5. "tenemos que volver a trabajar en esa rama y volver a hacer cambios puesto que la UI para la visualización del consumo de las suscripciones ha vuelto a cambiar". Merge the new `main` into the existing branch and re-home OpenCode Go usage onto the current usage UI; S1-S4 continue to hold, the footer keeps showing only the active provider, and `/gentle:usage` keeps listing the collected providers in the new presentation.
 
 ## Tasks
 T1 | S1 | done: reconciled parser and parser tests; RED percent 101 accepted → GREEN 47/47 | commit: `74a8795d4` | Risk: none (pure parsing).
-T2 | S1,S2,S3 | blocked on disposition of unrelated red full-suite binary-cache test; implementation and focused/type/harness checks complete | commit: `74a8795d4` | Risk: items 2,4 (bearer credential and concurrent refresh).
+T2 | S1,S2,S3 | reopened by S5: prior round passed focused/type/harness checks; re-verification on merged `main` pending | commit: pending | Risk: items 2,4 (bearer credential and concurrent refresh).
 T3 | S1-S4 | blocked on upstream maintainer reopen of issue/PR and user decision on pushing fork branch; issue body updated | commit: pending.
+T4 | S5 | pending: merge current `main` (`ffb1911`) into the branch and resolve conflicts | commit: pending | Risk: none (merge preserves both sides).
+T5 | S1,S2,S5 | pending: re-home OpenCode Go usage onto the new usage UI | commit: pending | Risk: items 2,4 (bearer credential and concurrent refresh).
+T6 | S1,S2,S5 | pending: update tests and docs for the new presentation | commit: pending | Risk: none.
+T7 | S5 | pending: focused suite, typecheck, harness checks, and differential check against `main` | commit: pending | Risk: none.
 
 ## Log
 L1. Ok, quiero reabrir tanto la issue como el PR pero antes revisa que el código siga siendo válido con el estado actual del repo en la rama main y revisa también los mensajes que ha dejado coderabbit en el PR por si son relevantes y requieren arreglo
@@ -27,3 +33,4 @@ L10. Removed `odd/tasks/opencode-go-usage-main-sync.md` from the resulting featu
 L11. Independent high-risk verifier: S1/S2 supported, S3 initially blocked by two issues in inactive-provider discovery (double timeout and stale row after credential revocation). RED revocation test reproduced stale row; both issues fixed by using one bounded refreshProvider window and dropping revoked key from the extra scope. Verifier rechecked S3 with no remaining blocker. Final focused usage suite: 401/401 pass, 0 fail; full suite remains red only on the unchanged binary-cache test noted in L9.
 L12. Differential check against a `git archive main` scratch copy: unchanged Codex and NaN public usage tests return identical normalized stdout, empty stderr and exit code 0 in both versions. Native ASSESS for committed range `main..HEAD` reported nativeRisk medium, reviewDue false (`under_budget`), security item 2 escalated high; separate independent verifier completed, no native review started.
 L13. Merge work unit `74a8795d4 feat(shell): sync OpenCode Go usage with main` has parents old PR head `50731ae` and current main `9ec6349`. Scope against main: six feature paths, 306 additions, 22 deletions; all unrelated main changes were preserved by the merge. Current branch remains local, no fork push. Issue #872 body was edited to specify active-only header and `/gentle:usage` (no sidebar), but attempts to reopen issue and PR #1525 failed: GraphQL reopen refused and issue REST state=open returned 422; upstream permissions include no push or triage. Issue remains closed with `status:needs-review`, PR remains closed and unlabeled. Maintainer action and an explicit decision to push to the fork are needed.
+L14. tenemos que volver a trabajar en esa rama y volver a hacer cambios puesto que la UI para la visualización del consumo de las suscripciones ha vuelto a cambiar
