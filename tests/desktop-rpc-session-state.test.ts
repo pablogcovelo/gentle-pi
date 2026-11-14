@@ -150,6 +150,24 @@ test("an unsummable host omits cost instead of claiming a zero", async () => {
 	assert.equal("cost" in emitted[0]!.data, false);
 });
 
+test("a settle that only moves the cost emits exactly one more event", async () => {
+	// Advisory R3-002: the field's interaction with the change-only dedup is a
+	// consequence of the shared mechanism, and this proves it over two settles.
+	const { bridge, emitted } = sessionStateBridge();
+	bridge.settle(fakeCtx({ entries: [] }));
+	assert.equal(emitted.length, 1, "the first settle delivers the state");
+	assert.equal(emitted[0]!.data.cost, 0);
+
+	bridge.settle(fakeCtx({ entries: [] }));
+	assert.equal(emitted.length, 1, "an unchanged cost delivers nothing");
+
+	bridge.settle(fakeCtx({ entries: [
+		{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.5 } } } },
+	] }));
+	assert.equal(emitted.length, 2, "a cost-only change delivers exactly one event");
+	assert.equal(emitted[1]!.data.cost, 0.5);
+});
+
 // ---- Availability is per field: unavailable is omitted, never zero ----
 
 test("an unavailable value is omitted, never sent as zero or a placeholder", async () => {

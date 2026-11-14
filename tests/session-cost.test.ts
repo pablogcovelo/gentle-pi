@@ -94,3 +94,24 @@ test("footer cost pin: dollar-plus costs format without decimals padding and a f
 	assert.equal(fresh.costTotal, 0);
 	assert.ok(renderShellBar(fresh, plainTheme, 120).join("\n").includes("$0.000"));
 });
+
+test("an owner that throws while answering reads as unavailable, never as zero", () => {
+	// Advisory R3-001: the catch branch is a documented guarantee, so it needs a
+	// test. This is an accessor that fails, not one that is absent.
+	const pi = { getThinkingLevel: () => "medium" } as unknown as ExtensionAPI;
+	const throwing = {
+		cwd: "/repo",
+		model: { id: "gpt-5.5", provider: "openai-codex", reasoning: true, contextWindow: 272_000 },
+		sessionManager: {
+			getCwd: () => "/repo",
+			getSessionName: () => "fixture",
+			getEntries: () => { throw new Error("session store unavailable"); },
+			getSessionId: () => "session-cost-throwing",
+		},
+		modelRegistry: { isUsingOAuth: () => true },
+		getContextUsage: () => ({ tokens: 1_000, contextWindow: 272_000, percent: 1 }),
+	} as unknown as ExtensionContext;
+	assert.equal(readSessionCost(throwing), undefined, "a failure to answer is unavailability, not zero");
+	assert.equal(sessionCost(throwing), 0, "the footer's read keeps its zero fallback");
+	assert.equal(buildShellBarModel(pi, throwing, footerData, {}).costTotal, 0);
+});
