@@ -62,12 +62,12 @@ Returns the currently implemented contract; clients must not infer support from 
   "schema": "gentle-shell.desktop-rpc/v1",
   "command": "gentle:desktop",
   "widget": "gentle-desktop-rpc",
-  "methods": ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "apply_profile", "list_subagents", "cancel_subagent"],
+  "methods": ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "apply_profile", "list_subagents", "cancel_subagent", "get_worktree_changes"],
   "events": ["config_changed", "permission_mode_changed", "rate_limit", "design_canvas", "jobs_update", "profile_applied", "agents_update"]
 }
 ```
 
-The permission methods, the bounded config read and write, the subscription-usage read and refresh, the design-canvas read, the background-jobs list and cancel, the profile apply, the subagents list and cancel, and the `config_changed`, `permission_mode_changed`, `rate_limit`, `design_canvas`, `jobs_update`, `profile_applied`, and `agents_update` events are advertised because this extension wires them. `set_config` and `config_changed` are advertised only because the config bridge actually implements that writer — advertising is not a forward-looking wish list. The design slice advertises exactly its one read method and its one transition event, not the canvas `open`/`stop` actions, which stay the `gentle_design` tool's job. The jobs slice advertises exactly its list and cancel methods and its one registry-change event, not the `bash_background`/`monitor` start tools, which stay agent tools. The profiles slice advertises exactly its one apply method and its one applied event; profile edits stay `set_config`. The subagents slice advertises exactly its list and cancel methods and its one transition event, not the agent dispatch tools, which stay agent tools. Method availability is not a claim that every dependency is loaded — see [Permission limits](#permission-limits), [Configuration limits](#configuration-limits), [Usage limits](#usage-limits), [Design limits](#design-limits), [Jobs limits](#jobs-limits), [Profiles limits](#profiles-limits), and [Subagents limits](#subagents-limits).
+The permission methods, the bounded config read and write, the subscription-usage read and refresh, the design-canvas read, the background-jobs list and cancel, the profile apply, the subagents list and cancel, the worktree-changes read, and the `config_changed`, `permission_mode_changed`, `rate_limit`, `design_canvas`, `jobs_update`, `profile_applied`, and `agents_update` events are advertised because this extension wires them. `set_config` and `config_changed` are advertised only because the config bridge actually implements that writer — advertising is not a forward-looking wish list. The design slice advertises exactly its one read method and its one transition event, not the canvas `open`/`stop` actions, which stay the `gentle_design` tool's job. The jobs slice advertises exactly its list and cancel methods and its one registry-change event, not the `bash_background`/`monitor` start tools, which stay agent tools. The profiles slice advertises exactly its one apply method and its one applied event; profile edits stay `set_config`. The subagents slice advertises exactly its list and cancel methods and its one transition event, not the agent dispatch tools, which stay agent tools. The worktree slice advertises exactly its one read method and no event. Method availability is not a claim that every dependency is loaded — see [Permission limits](#permission-limits), [Configuration limits](#configuration-limits), [Usage limits](#usage-limits), [Design limits](#design-limits), [Jobs limits](#jobs-limits), [Profiles limits](#profiles-limits), [Subagents limits](#subagents-limits), and [Worktree limits](#worktree-limits).
 
 ### `get_snapshot`
 
@@ -902,6 +902,43 @@ Otherwise the answer is the outcome, with the screen's notices as `notes` (`leve
 
 Only one apply runs at a time in a Pi process, across sessions. A request that arrives while another apply is running answers `profile_apply_busy` and changes nothing. While an apply runs, `set_config` for `profiles`, `profile_fallbacks`, and `pins` also answers `profile_apply_busy` and writes nothing: the apply rewrites the profiles store (and restores it on failure) from the snapshot it read, so an edit accepted mid-apply would otherwise be lost. Retry after the apply answers. The `/gentle:profiles` screen's Use in this session and Make default (including the save they make first) take the same gate, so they never run alongside a Desktop apply and a Desktop apply answers `profile_apply_busy` while one of them runs.
 
+### `get_worktree_changes`
+
+Returns the working-tree changes Gentle Shell's own Changes scan computes for one requested root, through the same tracker (`WorktreeChangesTracker`), not a second scanner. The read is Git read-only: discovery (`worktree list --porcelain -z`), a per-root HEAD verify (`rev-parse --verify -q HEAD`), `status --porcelain=v1 --untracked-files=all -z`, and `diff --numstat HEAD`. A root that discovery cannot describe adds the read-only `symbolic-ref --quiet --short HEAD` probe. Nothing else runs, and no git state is written.
+
+```json
+{ "schema": "gentle-shell.desktop-rpc/v1", "requestId": "desktop-64", "method": "get_worktree_changes", "params": { "root": "/home/dev/project" } }
+```
+
+| Param | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `root` | yes | absolute path, ≤ 4096 characters | A worktree root of this session: the project root the session runs in, or a root its Changes scan already tracks. |
+
+Any other key or a malformed value is `invalid_request`. A root outside that set is `unknown_root`, and no Git runs at all: an unknown root is an error, never an empty result.
+
+The answer carries the owner's real shape — `root`, optional `branch`, and `model`. The counts live in `model.added` and `model.deleted` beside `model.digest` and the per-file `countsUnavailable`; there are no flat `additions`/`deletions` fields:
+
+```json
+{
+  "schema": "gentle-shell.desktop-rpc/v1",
+  "kind": "response",
+  "requestId": "desktop-64",
+  "ok": true,
+  "data": {
+    "root": "/home/dev/project",
+    "branch": "main",
+    "model": {
+      "files": [{ "path": "src/index.ts", "added": 12, "deleted": 3, "status": "modified" }],
+      "added": 12,
+      "deleted": 3,
+      "digest": "1a2b3c4d5e6f7081"
+    }
+  }
+}
+```
+
+`file.path` is relative to `root`; `status` is one of `modified`, `added`, `deleted`, `renamed`, `untracked`. An untracked file carries `countsUnavailable` until its lines were actually counted — `added: 0` is never the only signal for it. A clean root answers an empty `model` and no `branch` claim. The states Gentle Shell labels are part of the contract: a root whose scan failed answers `{ "root": "…", "failed": true }`, and a root with no commits yet answers `{ "root": "…", "unborn": true }` — each with no `model`, never zero files or zero lines. `branch` is `unknown` when the root's own branch cannot be read. The method has no event.
+
 ## Responses
 
 Success:
@@ -1210,6 +1247,14 @@ Follows an `apply_profile` answer whose `status` is `applied`, after the respons
 - **Confirmation is Desktop's job.** The token binds an apply to the title and message that were shown and to the exact saved profile; it is not a proof that a person saw them.
 - **Truthful absence.** When the owning extension is not loaded, `apply_profile` answers `profiles_unavailable` rather than inventing an outcome.
 
+## Worktree limits
+
+- **One owner, no second scanner.** `get_worktree_changes` reads through the existing `WorktreeChangesTracker` (`lib/shell-changes.ts`) driven by the same `shellGitRunner` factory every shell scan uses. There is no second git spawn path, no cache, no watcher, and no scan reuse: every request scans.
+- **Read-only, roots of this session only.** The only Git work is the four read-only vectors above (plus `symbolic-ref --quiet --short HEAD` for a root discovery cannot describe). There is no branch or worktree policy and no new policy owner. The requested root must be the session's project root or one of its registered change roots, so a Desktop request can never point this read at an arbitrary path.
+- **Truthful labels, real shapes.** A failed or unborn root is labeled (`failed` / `unborn`) and carries no model, never zero files or zero lines; counts live in `model.added`/`model.deleted`. Raw git stderr, absolute paths beyond the requested `root`, and environment values never cross the contract.
+- **Counts are labeled, never silent zeros.** An untracked file never appears in `diff --numstat` (`lib/shell-changes.ts:118` would answer `added: 0` for it), and the shell's per-file untracked-line counter is private to the shell extension, so without a counter nothing measured its lines: the projection labels every unmeasured untracked file `countsUnavailable` instead of letting `added: 0` claim a measured zero, and recomputes `model.digest` over the labeled files. `model.added` and `model.deleted` stay the tracker's own sums of measured line counts (tracked files), the same numbers the footer renders with its partial-counts note. When a counter is wired, a measured untracked file answers with its real count and no label. Hoisting the real counter into `lib/` — a T0-style extraction, not this task — is the follow-up.
+- **Truthful absence.** Without a bound session, the method answers `worktree_unavailable` rather than an empty result.
+
 ## Verification
 
 ```sh
@@ -1222,6 +1267,7 @@ node --experimental-strip-types --test \
   tests/desktop-rpc-jobs.test.ts \
   tests/desktop-rpc-agents.test.ts \
   tests/desktop-rpc-profiles.test.ts \
+  tests/desktop-rpc-worktree.test.ts \
   tests/maintainer/desktop-rpc.maintest.ts
 ```
 
@@ -1236,6 +1282,8 @@ The jobs tests use the existing background-job fake (the same fake shell operati
 The subagents tests use a real `TaskStore` plus a fake runner (never a child process) and a fake owner service only: they cover the whitelisted model/usage/cost projection and field redaction, the closed `lastStep` vocabulary (raw error/path/secret/provider text never crosses), the bounded active + recent-finished selection, list/cancel param shapes, the active-session filter, owner absence (`agents_unavailable`, never a fabricated empty list), the `runner.cancel` stop path and its boolean result, already-terminal idempotency with no event, unknown and foreign-session `not_found`, invalid params rejected before discovery, agent-driven `agents_update` events with foreign-session filtering, content dedupe and burst coalescing, the response-before-event order over the router, session reset disconnecting observers and dropping late outcomes, late-discovery disposal, and the versioned adapter discovery. They also run the real `gentleAgents` owner seam in-process over a fake child (real `TaskStore` + real `AgentRunner`, never a real process): a truthful empty list, a typed `not_found` cancel, a live-task cancel that honors `runner.cancel`'s result with no immediate event and one eventual `agents_update`, and the persisted usage breakdown surviving `saveTask`/`loadStoredTask` restore.
 
 The profiles tests use a fake owner service only: they cover param validation, owner absence (`profiles_unavailable`), the result shapes, the `profile_applied` event only after `applied`, and that the token changes with the mode, name, title, message, and profile content. The owner itself is covered in `tests/gentle-ai.test.ts`, which drives the real screen actions in a temporary config home: a default apply asks the screen's diff and writes nothing without its token, a wrong or stale token asks again and writes nothing, an unknown profile writes nothing, a session apply binds without writing shared state, and only one apply runs at a time.
+
+The worktree tests fake both runners the owner tracker takes — discovery and the per-root factory — and no git process ever runs: they cover the param shapes and the session-roots gate (malformed and `unknown_root` answers with zero git calls), the owner's real response shapes (`branch` beside `model.added`/`model.deleted`/`digest`, with the `countsUnavailable` label replacing an unmeasured untracked zero and a wired counter answering measured counts with no label), the `failed`, `unborn`, and `unknown`-branch labels with no model, the clean-root empty model, the bridge's session gating, reset absence, and per-root runner targeting, the per-domain exact capabilities array, an answer through the real router, and the read-only proof that a scan runs exactly the four per-root read-only git vectors and nothing else, plus the assertion that a root discovery cannot describe adds only the read-only branch probe.
 
 The config tests build six stores in a temporary root and inject the worktree identity, so no real user config, agent home, or repository pin is read. On the read side they cover every store, current path precedence, missing and malformed layers, revision stability and change, the read-only split, rejected stores/params/paths, the bounded snapshot projection, and a byte-and-mtime comparison proving a read never mutates a store. On the write side they cover a valid write for each writable store and both pin layers, clearing either pin layer and observing the winner fall back, clearing an already-missing layer as a no-op, clearing and replacing an unreadable layer, creating a missing store, a stale or missing `expectedRevision` (including on a clear), the documented rejection order (envelope, then store identity, then mutability, then revision, then payload), data the owner would drop, malformed pin clear shapes, extra and physical-path keys, every read-only store, a forced owner write failure (the store path is a directory) answering `write_failed` with no path, OS code, or event and an unchanged tree, the no-op path with untouched bytes and mtime, the resulting disk bytes, revision movement and its invalid-state coarseness, the response-then-event order over the real transport, and that a stopped session neither answers nor writes. They also re-check that the config dispatcher still falls through to the permission bridge.
 
