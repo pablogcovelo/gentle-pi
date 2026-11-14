@@ -39,7 +39,7 @@ T6 | S9 | slice: `capabilities` and `docs/desktop-rpc.md` refreshed for the five
 
 Slice 1: this document.
 
-Slice 2: T0 first and alone in its own commit, then T1 and T2 — the two read-only inventory methods the Desktop footer needs, independent of each other, both shut out any health claim. Boundary recorded so the review slices stay readable: T0 `02dc6e8f7`, T1 `a19dfbd9d`, T2 pending.
+Slice 2: T0 first and alone in its own commit, then T1 and T2 — the two read-only inventory methods the Desktop footer needs, independent of each other, both shut out any health claim. Closed and recorded so the review slices stay readable: T0 `02dc6e8f7`, T1 `a19dfbd9d`, T2 `82fe194fa`, each with its own native receipt, plus the four bookkeeping and receipt commits that sit between them.
 
 Slice 3: T3 and T4, the two small projections, one owner each. T4 commits alone because it is item 3.
 
