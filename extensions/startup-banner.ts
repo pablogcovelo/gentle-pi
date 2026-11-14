@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { resolveAnimationPolicy, type AnimationPolicy } from "../lib/animation-policy.ts";
 import { PI_SUBCOMMANDS } from "../lib/gentle-shell-launcher.ts";
 import { gentlePiConfigHome } from "../lib/agent-home.ts";
+import { readMcpServerNames } from "../lib/mcp-config.ts";
 
 
 export type BannerColor = "pink" | "cyan" | "yellow" | "green";
@@ -718,21 +719,11 @@ export default function (pi: ExtensionAPI) {
     }, 100);
 
     setTimeout(() => {
-      (async () => {
-        try {
-          // Same global mcp.json Pi itself loads: <agentDir>/mcp.json, which
-          // follows PI_CODING_AGENT_DIR (for example the Gentle Shell home).
-          const raw = await readFile(
-            join(getAgentDir(), "mcp.json"),
-            "utf8",
-          );
-          const cfg = JSON.parse(raw);
-          mcpServersCount = Object.keys(cfg.mcpServers || {}).length;
-        } catch {
-          mcpServersCount = 0;
-        }
-        refreshStats();
-      })();
+      // The same global mcp.json Pi itself loads, through its single owner:
+      // lib/mcp-config.ts, which follows PI_CODING_AGENT_DIR.
+      readMcpServerNames()
+        .then((names) => { mcpServersCount = names.length; })
+        .finally(() => refreshStats());
     }, 150);
 
     setTimeout(() => {
