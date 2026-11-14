@@ -103,3 +103,25 @@ L5. Requirement change, relayed by the desktop-side document owner, verbatim (it
  no rompe enlaces de este lado."
 
 Evidence for L5, gathered read-only in this repository before the rewrite (path:line): `lib/shell-changes.ts:216,221-225,272-334`; `lib/desktop-rpc-config.ts:237-246`; `lib/desktop-rpc-profiles.ts:12,152`; `extensions/startup-banner.ts:723-730`; `extensions/gentle-shell.ts:216-289`; `lib/session-profile-freeze.ts` via `extensions/gentle-shell.ts:15,259`; `extensions/quiet-tools.ts:44-52`; `extensions/gentle-agents.ts:533-552`; `lib/gentle-ai-renderer.ts:68-75`; `extensions/gentle-ai.ts:2286`; `extensions/gentle-desktop-rpc.ts:78`; `lib/desktop-rpc.ts:148,173`; `docs/desktop-rpc.md:60-62,839-905,972,1139-1212,1213-1226`; `docs/mcp-status.md:11`; `tests/maintainer/desktop-rpc.maintest.ts:183-184`; `tests/desktop-rpc-safety.test.ts:47-140`; pi `1.4.0` `dist/core/extensions/types.d.ts:1391-1392` and absent `getMcpStatus` in `dist`.
+
+L6. T0 review receipt, from the native gate (the revision hash stays in the native record; it is not retyped here):
+
+```text
+state: approved
+lineage_id: review-be4ae50e320b1882
+target_identity: sha256:0c75321e43627cf77d537e7a2d56c7ec3c4d4e5a4fd17bc8c8f3eae936aa881f
+risk_tier: medium
+selected_lenses: ["review-reliability"]
+changed_files: 4
+original_changed_lines: 252
+correction_budget: 126 (untouched: no correction was opened)
+authority: burned (gentle-ai.review-acknowledged/v1)
+delivery: ordinary-repository-policy
+```
+
+One model run, `opencode-go/deepseek-v4.1-flash`, 196 s, 43 925 tokens. Two advisory findings, recorded with the gate's own statement, verbatim: "This review is approved and its receipt stands. Every finding listed here is non-blocking: none opened a correction, none reopens this review, and no correction transition is offered for this candidate. Treat them as separate later work, never as a reason to re-run review on this candidate."
+
+- R3-001 | reliability | WARNING | `lib/mcp-config.ts:27-28` | informational
+- R3-002 | reliability | SUGGESTION | `tests/mcp-config.test.ts:38-51` | informational
+
+Follow-up ownership, so neither finding is lost and neither reopens T0: R3-001 is that a failed or malformed `mcp.json` reads as no servers with no signal, which belongs to T2 because T2 must already distinguish an absent config from an unusable one; R3-002 is that the two structural invariants scan the source with regular expressions, which is recorded here and not scheduled, with the condition that the single-reader invariant must keep some enforcing check if it is ever rewritten. Neither finding authorizes a fresh review of this candidate.
