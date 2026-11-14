@@ -202,3 +202,24 @@ L10. T5 ships `session_state_changed` with one declared gap: no `cost` field. It
 
 
 L11. T6 closed the contract refresh. The audit compared the documented `capabilities` arrays, the maintainer probe and the router, and found them already in agreement on four methods and one event after each landed with its own section, so T6 became two corrections instead of a rewrite: the missing `tests/desktop-rpc-tools.test.ts` line in the verification list, and a header that had claimed five methods since the original commit while S3-S6 define four and the owner's brief has always named four blocks. No earlier method was altered, no schema changed, and the per-domain strict assertions were already passing before this commit, which is why they needed nothing here.
+
+L12. Final receipt for the whole feature, and the abandoned lineage that preceded it.
+
+```text
+state: approved
+lineage_id: review-a34363ff7d20b5b9
+target_identity: sha256:e261772c725644e336da01faa8a24f70915e863f3b82cd97af8f9bac97059d5c
+risk_tier: medium
+selected_lenses: ["review-reliability"]
+changed_files: 28
+original_changed_lines: 2565
+correction_budget: 200 (untouched on this lineage)
+authority: burned (gentle-ai.review-acknowledged/v1)
+delivery: ordinary-repository-policy
+```
+
+One model run, `opencode-go/deepseek-v4.1-flash`, 252 s, 105 008 tokens. Three advisory findings, all informational: `lib/mcp-config.ts:53-54` (the recurring one), `lib/desktop-rpc-session-state.ts:156`, and a SUGGESTION at `docs/desktop-rpc.md:1053`.
+
+The lineage that came before it, `review-7f7f82fe2852b3dc`, is recorded here because its recommendation mattered: it closed `correction_required` on one CRITICAL finding, R3-001 at `lib/desktop-rpc-profile.ts:71`, claiming the worktree resolver received `input.cwd` twice so `input.sessionId` never reached `resolveSessionWorktree`. The code does not support that: `WorktreeResolver` is `(path, cwd)` with no session parameter, `memoizeWorktreeResolver` keys on path plus cwd, the shell binds the same pair at `extensions/gentle-shell.ts:277`, and the session id does reach `resolveSessionProfile`. The correction was still worth making, because the finding's conclusion pointed at a missing invariant: commit `4ad549166` adds a parity test proving the Desktop label equals the label the footer's own reader shows for that session, plus the comment that explains why the resolver receives the cwd twice.
+
+That correction could not be declared as a plan: the correction-plan slot only accepts the frozen candidate tree, and my commit had already moved it. Restoring the frozen tree needed a destructive reset, which the safety policy refused; I asked the owner and they chose to abandon the lineage instead. The abandon is committed with reason `operator_disposition`, actor `pi`, and discarded work recorded as one captured lens result with findings present. The corrected tree then went through the gate as a fresh candidate and was approved without the finding being raised again.
