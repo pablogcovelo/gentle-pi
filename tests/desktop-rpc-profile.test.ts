@@ -16,6 +16,7 @@ import {
 import { profilesFilePath } from "../lib/agent-profiles.ts";
 import { localProfilePinPath, repoProfileDeclarationPath, writeProfilePinSync } from "../lib/agent-profile-pin.ts";
 import { bindSessionProfile, readSessionProfileBinding, resetSessionProfileBindingsForTesting } from "../lib/session-profile-binding.ts";
+import { createActiveProfileReader } from "../extensions/gentle-shell.ts";
 import type { WorktreeIdentity } from "../lib/session-worktree-registry.ts";
 import { DESKTOP_RPC_SCHEMA, DesktopRpcRouter, type DesktopRpcOutcome } from "../lib/desktop-rpc.ts";
 
@@ -141,6 +142,25 @@ test("with a profile bound to the session, the response differs from the global 
 	bindSessionProfile("s-1", "team", {});
 	assert.deepEqual(read(configHome, workspace), { label: "team (session)", active: "team" });
 	assert.notEqual(read(configHome, workspace).label, read(configHome, workspace).active);
+});
+
+// ---- Parity with the footer: one session, one label, whichever channel asks ----
+
+test("the desktop label is the label the footer's own reader shows for that session", (t) => {
+	resetBindings(t);
+	const { configHome, workspace } = tempHome(t);
+	writeProfiles(configHome, PROFILES_FIXTURE);
+	bindSessionProfile("s-1", "solo", {});
+	// The footer's reader binds the same cwd, the same worktree resolver and the
+	// same session id, and resolves through the same owner the projection uses.
+	const footer = createActiveProfileReader({ GENTLE_PI_CONFIG_HOME: configHome, ...FOLLOW_ENV });
+	footer.bind(workspace, () => ({ root: workspace, commonDir: workspace }), "s-1");
+	footer.refresh();
+	assert.equal(
+		read(configHome, workspace).label,
+		footer(),
+		"the Desktop label must be the label the footer shows, not a parallel resolution",
+	);
 });
 
 // ---- The exact footer spellings, through the real resolution owner ----

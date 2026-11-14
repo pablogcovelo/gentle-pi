@@ -68,6 +68,10 @@ export function activeProfileOutcome(params: Record<string, unknown>, input: Des
 	} else {
 		let identity: WorktreeIdentity | undefined;
 		try {
+			// The resolver's second argument is the repository cwd, not a session id
+			// (`WorktreeResolver = (path, cwd)`): the session root is both, and this is
+			// the same pair the shell binds (extensions/gentle-shell.ts:277). The
+			// session id reaches the profile owner through resolveSessionProfile below.
 			identity = input.resolveWorktree?.(input.cwd, input.cwd);
 		} catch {
 			identity = undefined;
