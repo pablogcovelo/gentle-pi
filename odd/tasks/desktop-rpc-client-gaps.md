@@ -125,3 +125,26 @@ One model run, `opencode-go/deepseek-v4.1-flash`, 196 s, 43 925 tokens. Two advi
 - R3-002 | reliability | SUGGESTION | `tests/mcp-config.test.ts:38-51` | informational
 
 Follow-up ownership, so neither finding is lost and neither reopens T0: R3-001 is that a failed or malformed `mcp.json` reads as no servers with no signal, which belongs to T2 because T2 must already distinguish an absent config from an unusable one; R3-002 is that the two structural invariants scan the source with regular expressions, which is recorded here and not scheduled, with the condition that the single-reader invariant must keep some enforcing check if it is ever rewritten. Neither finding authorizes a fresh review of this candidate.
+
+L7. T1 review receipt and the maintainer-probe baseline. Same shape as L6, and the revision hash again stays in the native record:
+
+```text
+state: approved
+lineage_id: review-5d26bc6fe134445b
+target_identity: sha256:c8980b19bd1efe0f943e69c3b8480545b6de05d74155c326aa8c39a26b8125ab
+risk_tier: medium
+selected_lenses: ["review-reliability"]
+changed_files: 13
+original_changed_lines: 470
+correction_budget: 200 (untouched: no correction was opened)
+authority: burned (gentle-ai.review-acknowledged/v1)
+delivery: ordinary-repository-policy
+```
+
+One model run, `opencode-go/deepseek-v4.1-flash`, 305 s, 71 948 tokens. One advisory finding, under the same non-blocking statement quoted in L6:
+
+- R3-001 | reliability | WARNING | `tests/desktop-rpc-worktree.test.ts:153-172` | informational
+
+Follow-up ownership: R3-001 is the bridge-level gating assertions in that range, which is later work on the same file, not a reopen of T1.
+
+Maintainer probe baseline, recorded because T1 changed the strict arrays it asserts: the full `pnpm test:maintainer` run reported 45 tests, 37 passed, 2 failed, and the desktop RPC probe passed. Both failures reproduce on `develop` with none of this feature's commits (`tests/maintainer/pi-update-source.maintest.ts`, the `pnpm` branch of the real source update; `tests/maintainer/provider-relay.maintest.ts`, the relay-unavailable case against a capable binary), so they are pre-existing and environment-dependent, not regressions. The desktop RPC maintainer probe passes on both trees.
