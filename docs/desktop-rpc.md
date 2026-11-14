@@ -1405,6 +1405,7 @@ node --experimental-strip-types --test \
   tests/desktop-rpc-worktree.test.ts \
   tests/desktop-rpc-mcp.test.ts \
   tests/desktop-rpc-profile.test.ts \
+  tests/desktop-rpc-tools.test.ts \
   tests/desktop-rpc-session-state.test.ts \
   tests/maintainer/desktop-rpc.maintest.ts
 ```

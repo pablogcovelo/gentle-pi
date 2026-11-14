@@ -1,6 +1,6 @@
 # Desktop RPC — additive methods the Desktop client needs
 
-Follow-up to `odd/tasks/desktop-rpc.md`. Adds five methods and one event so Gentle Shell Desktop can render worktree changes, MCP inventory, the active agent-model profile, the native action vocabulary and truthful session state without parsing TUI text and without duplicating any existing owner. Transport, schema, correlation, lifecycle, gating and event ordering stay exactly as slice 1 defined them. The five methods and the event are additive; T0 is the one prerequisite refactor, recorded in S2.
+Follow-up to `odd/tasks/desktop-rpc.md`. Adds four methods and one event so Gentle Shell Desktop can render worktree changes, MCP inventory, the active agent-model profile, the native action vocabulary and truthful session state without parsing TUI text and without duplicating any existing owner. Transport, schema, correlation, lifecycle, gating and event ordering stay exactly as slice 1 defined them. The five methods and the event are additive; T0 is the one prerequisite refactor, recorded in S2.
 Companion app document: `gentle-shell-desktop` `odd/tasks/desktop-rpc-client.md`. This document authorizes no application change and no publication.
 
 ## Specs
