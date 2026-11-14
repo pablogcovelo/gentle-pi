@@ -172,3 +172,28 @@ One model run, `opencode-go/deepseek-v4.1-flash`, 193 s, 58 290 tokens. Two advi
 Scope note, so this receipt is not misread: the frozen candidate's base is the T0 tree, so its 17 files and 961 lines span T1 and T2 together. T1 already holds its own approval and burnt authority above; this run did not replace it, it re-read the same bytes beside T2.
 
 Follow-up ownership: both findings sit in the `ok`/`absent`/`unusable` classification block. They belong to that module the next time it is touched, never to a reopen of this candidate.
+
+L9. T3 review receipt. Same shape; revision hash in the native record:
+
+```text
+state: approved
+lineage_id: review-3179b7cca3b6cda3
+target_identity: sha256:6fa443462b333c01748c828991f5c840bde6c112587a8e594505a6e939af3648
+risk_tier: medium
+selected_lenses: ["review-reliability"]
+changed_files: 19
+original_changed_lines: 1390
+correction_budget: 200 (untouched)
+authority: burned (gentle-ai.review-acknowledged/v1)
+delivery: ordinary-repository-policy
+```
+
+One model run, `opencode-go/deepseek-v4.1-flash`, 228 s, 71 131 tokens. Three advisory findings under the statement quoted in L6:
+
+- R3-001 | reliability | WARNING | `lib/mcp-config.ts:53-54` | informational (the same block T2's receipt named)
+- R3-002 | reliability | WARNING | `lib/desktop-rpc-profile.ts:70` | informational
+- R3-003 | reliability | WARNING | `docs/desktop-rpc.md:1019` | informational
+
+Acceptance for T3, recorded because it decided the method's existence: with a profile bound to the session the response differs from `get_config{store:"profiles"}.active` — `solo (session)` against `team`, and `team (session)` against `team` when the session binds the very name the store holds. That difference is the `(session)` spelling, not a different profile; the contract carries the label and the global name and claims nothing more. Had it not differed, the method was to be deleted instead of shipped.
+
+Scope note: the frozen base stayed at the T0 candidate tree, so this candidate re-read T1, T2 and T3 (19 files, 1390 lines). That accumulation is the provider's projection, not a decision taken here; L10 records what it costs and how it was stopped.
