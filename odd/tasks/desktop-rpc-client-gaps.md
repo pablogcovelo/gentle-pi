@@ -148,3 +148,27 @@ One model run, `opencode-go/deepseek-v4.1-flash`, 305 s, 71 948 tokens. One advi
 Follow-up ownership: R3-001 is the bridge-level gating assertions in that range, which is later work on the same file, not a reopen of T1.
 
 Maintainer probe baseline, recorded because T1 changed the strict arrays it asserts: the full `pnpm test:maintainer` run reported 45 tests, 37 passed, 2 failed, and the desktop RPC probe passed. Both failures reproduce on `develop` with none of this feature's commits (`tests/maintainer/pi-update-source.maintest.ts`, the `pnpm` branch of the real source update; `tests/maintainer/provider-relay.maintest.ts`, the relay-unavailable case against a capable binary), so they are pre-existing and environment-dependent, not regressions. The desktop RPC maintainer probe passes on both trees.
+
+L8. T2 review receipt. Same shape, revision hash again left in the native record:
+
+```text
+state: approved
+lineage_id: review-4eaae586000e727b
+target_identity: sha256:ccaefddc46ea56fdbb64882c11db919e359d4b604aaba8fcfd26c1a3cd62b02a
+risk_tier: medium
+selected_lenses: ["review-reliability"]
+changed_files: 17
+original_changed_lines: 961
+correction_budget: 200 (untouched: no correction was opened)
+authority: burned (gentle-ai.review-acknowledged/v1)
+delivery: ordinary-repository-policy
+```
+
+One model run, `opencode-go/deepseek-v4.1-flash`, 193 s, 58 290 tokens. Two advisory findings under the same non-blocking statement quoted in L6:
+
+- R3-001 | reliability | WARNING | `lib/mcp-config.ts:53-54` | informational
+- R3-002 | reliability | WARNING | `lib/mcp-config.ts:63` | informational
+
+Scope note, so this receipt is not misread: the frozen candidate's base is the T0 tree, so its 17 files and 961 lines span T1 and T2 together. T1 already holds its own approval and burnt authority above; this run did not replace it, it re-read the same bytes beside T2.
+
+Follow-up ownership: both findings sit in the `ok`/`absent`/`unusable` classification block. They belong to that module the next time it is touched, never to a reopen of this candidate.
