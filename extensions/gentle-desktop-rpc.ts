@@ -26,6 +26,8 @@ import { DESKTOP_AGENTS_EVENTS, DESKTOP_AGENTS_METHODS } from "../lib/desktop-rp
 import { DesktopAgentsBridge } from "../lib/desktop-agents-service.ts";
 import { DESKTOP_PROFILES_EVENTS, DESKTOP_PROFILES_METHODS, DesktopProfilesBridge } from "../lib/desktop-rpc-profiles.ts";
 import { DESKTOP_WORKTREE_METHODS, DesktopWorktreeBridge } from "../lib/desktop-rpc-worktree.ts";
+import { DESKTOP_MCP_METHODS, DesktopMcpBridge } from "../lib/desktop-rpc-mcp.ts";
+import { readMcpServerNamesDetailed } from "../lib/mcp-config.ts";
 import { shellGitRunner } from "./gentle-shell.ts";
 import { isInteractiveRpcHost } from "../lib/rpc-host.ts";
 
@@ -49,7 +51,8 @@ export default function desktopRpc(pi: ExtensionAPI) {
 	// AgentRunner; profile applies delegate to the existing `/gentle:profiles`
 	// owner and its own apply actions; worktree changes delegate to the existing
 	// Gentle Shell changes tracker through the same runner factory every shell
-	// scan uses. None has a store of its own.
+	// scan uses; MCP inventory reads the single mcp.json reader, extension
+	// registrations and tool names. None has a store of its own.
 	const permissions = new DesktopPermissionBridge(pi);
 	const config = new DesktopConfigBridge();
 	const usage = new DesktopUsageBridge(pi);
@@ -58,11 +61,12 @@ export default function desktopRpc(pi: ExtensionAPI) {
 	const agents = new DesktopAgentsBridge(pi);
 	const profiles = new DesktopProfilesBridge(pi);
 	const worktree = new DesktopWorktreeBridge(shellGitRunner);
+	const mcp = new DesktopMcpBridge(readMcpServerNamesDetailed, pi);
 	const domain: DesktopRpcDomain = (method, params) => {
 		// Config is the only synchronous bridge; permission, usage, design, jobs,
-		// profiles, agents, and worktree answers are awaited in fall-through order, so
-		// an unknown method still resolves to the router's `unsupported_method` instead
-		// of an early `undefined`.
+		// profiles, agents, mcp, and worktree answers are awaited in fall-through
+		// order, so an unknown method still resolves to the router's
+		// `unsupported_method` instead of an early `undefined`.
 		const configOutcome = config.handle(method, params);
 		if (configOutcome !== undefined) return configOutcome;
 		return (async () => {
@@ -78,11 +82,13 @@ export default function desktopRpc(pi: ExtensionAPI) {
 			if (profilesOutcome !== undefined) return profilesOutcome;
 			const agentsOutcome = await agents.handle(method, params);
 			if (agentsOutcome !== undefined) return agentsOutcome;
-			return worktree.handle(method, params);
+			const worktreeOutcome = await worktree.handle(method, params);
+			if (worktreeOutcome !== undefined) return worktreeOutcome;
+			return mcp.handle(method, params);
 		})();
 	};
 	const router = new DesktopRpcRouter(
-		["capabilities", "get_snapshot", ...DESKTOP_CONFIG_METHODS, ...DESKTOP_PERMISSION_METHODS, ...DESKTOP_USAGE_METHODS, ...DESKTOP_DESIGN_METHODS, ...DESKTOP_JOBS_METHODS, ...DESKTOP_PROFILES_METHODS, ...DESKTOP_AGENTS_METHODS, ...DESKTOP_WORKTREE_METHODS],
+		["capabilities", "get_snapshot", ...DESKTOP_CONFIG_METHODS, ...DESKTOP_PERMISSION_METHODS, ...DESKTOP_USAGE_METHODS, ...DESKTOP_DESIGN_METHODS, ...DESKTOP_JOBS_METHODS, ...DESKTOP_PROFILES_METHODS, ...DESKTOP_AGENTS_METHODS, ...DESKTOP_WORKTREE_METHODS, ...DESKTOP_MCP_METHODS],
 		// Method order is the documented contract; keep the capabilities arrays in
 		// `docs/desktop-rpc.md` and `tests/maintainer/desktop-rpc.maintest.ts` identical.
 		[...DESKTOP_CONFIG_EVENTS, DESKTOP_PERMISSION_EVENT, ...DESKTOP_USAGE_EVENTS, ...DESKTOP_DESIGN_EVENTS, ...DESKTOP_JOBS_EVENTS, ...DESKTOP_PROFILES_EVENTS, ...DESKTOP_AGENTS_EVENTS],
@@ -98,6 +104,7 @@ export default function desktopRpc(pi: ExtensionAPI) {
 		jobs.reset();
 		profiles.reset();
 		agents.reset();
+		mcp.reset();
 		worktree.reset();
 		router.stop();
 		if (!isInteractiveRpcHost(ctx.mode)) return;
@@ -148,6 +155,7 @@ export default function desktopRpc(pi: ExtensionAPI) {
 			jobs.attach(ctx);
 			profiles.attach(ctx);
 			agents.attach(ctx);
+			mcp.attach(ctx);
 			worktree.attach(ctx);
 			await router.handle(args);
 		},

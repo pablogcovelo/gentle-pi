@@ -1331,6 +1331,7 @@ test("capabilities advertise the wired config read and write surface", async (t)
 		"list_subagents",
 		"cancel_subagent",
 		"get_worktree_changes",
+		"mcp_status",
 	]);
 	assert.deepEqual(response.data.events, ["config_changed", "permission_mode_changed", "rate_limit", "design_canvas", "jobs_update", "profile_applied", "agents_update"]);
 });

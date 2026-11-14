@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readMcpServerNames } from "../lib/mcp-config.ts";
+import { readMcpServerNames, readMcpServerNamesDetailed } from "../lib/mcp-config.ts";
 
 // T0 of odd/tasks/desktop-rpc-client-gaps.md pins one invariant: the
 // <agentDir>/mcp.json read has exactly one owner. A second reader would let
@@ -91,4 +91,13 @@ test("a non-object mcpServers keeps the legacy banner count", async (t) => {
 	// of two entries reads as two configured servers before and after T0.
 	const dir = agentDir(t, JSON.stringify({ mcpServers: ["one", "two"] }));
 	assert.deepEqual(await readMcpServerNames(dir), ["0", "1"]);
+});
+
+test("a string mcpServers now reads as unusable instead of counting its characters", async (t) => {
+	// Deliberate change in T2 (advisory R3-001): Object.keys("abc") used to
+	// report three servers to the banner. A string is not a server map, so both
+	// readers now answer no names and the detailed read says why.
+	const dir = agentDir(t, JSON.stringify({ mcpServers: "abc" }));
+	assert.deepEqual(await readMcpServerNamesDetailed(dir), { status: "unusable", names: [] });
+	assert.deepEqual(await readMcpServerNames(dir), []);
 });

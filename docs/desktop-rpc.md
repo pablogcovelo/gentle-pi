@@ -62,12 +62,12 @@ Returns the currently implemented contract; clients must not infer support from 
   "schema": "gentle-shell.desktop-rpc/v1",
   "command": "gentle:desktop",
   "widget": "gentle-desktop-rpc",
-  "methods": ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "apply_profile", "list_subagents", "cancel_subagent", "get_worktree_changes"],
+  "methods": ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "apply_profile", "list_subagents", "cancel_subagent", "get_worktree_changes", "mcp_status"],
   "events": ["config_changed", "permission_mode_changed", "rate_limit", "design_canvas", "jobs_update", "profile_applied", "agents_update"]
 }
 ```
 
-The permission methods, the bounded config read and write, the subscription-usage read and refresh, the design-canvas read, the background-jobs list and cancel, the profile apply, the subagents list and cancel, the worktree-changes read, and the `config_changed`, `permission_mode_changed`, `rate_limit`, `design_canvas`, `jobs_update`, `profile_applied`, and `agents_update` events are advertised because this extension wires them. `set_config` and `config_changed` are advertised only because the config bridge actually implements that writer — advertising is not a forward-looking wish list. The design slice advertises exactly its one read method and its one transition event, not the canvas `open`/`stop` actions, which stay the `gentle_design` tool's job. The jobs slice advertises exactly its list and cancel methods and its one registry-change event, not the `bash_background`/`monitor` start tools, which stay agent tools. The profiles slice advertises exactly its one apply method and its one applied event; profile edits stay `set_config`. The subagents slice advertises exactly its list and cancel methods and its one transition event, not the agent dispatch tools, which stay agent tools. The worktree slice advertises exactly its one read method and no event. Method availability is not a claim that every dependency is loaded — see [Permission limits](#permission-limits), [Configuration limits](#configuration-limits), [Usage limits](#usage-limits), [Design limits](#design-limits), [Jobs limits](#jobs-limits), [Profiles limits](#profiles-limits), [Subagents limits](#subagents-limits), and [Worktree limits](#worktree-limits).
+The permission methods, the bounded config read and write, the subscription-usage read and refresh, the design-canvas read, the background-jobs list and cancel, the profile apply, the subagents list and cancel, the worktree-changes read, and the `config_changed`, `permission_mode_changed`, `rate_limit`, `design_canvas`, `jobs_update`, `profile_applied`, and `agents_update` events are advertised because this extension wires them. `set_config` and `config_changed` are advertised only because the config bridge actually implements that writer — advertising is not a forward-looking wish list. The design slice advertises exactly its one read method and its one transition event, not the canvas `open`/`stop` actions, which stay the `gentle_design` tool's job. The jobs slice advertises exactly its list and cancel methods and its one registry-change event, not the `bash_background`/`monitor` start tools, which stay agent tools. The profiles slice advertises exactly its one apply method and its one applied event; profile edits stay `set_config`. The subagents slice advertises exactly its list and cancel methods and its one transition event, not the agent dispatch tools, which stay agent tools. The worktree slice advertises exactly its one read method and no event. The MCP slice advertises exactly its one read method and no event. Method availability is not a claim that every dependency is loaded — see [Permission limits](#permission-limits), [Configuration limits](#configuration-limits), [Usage limits](#usage-limits), [Design limits](#design-limits), [Jobs limits](#jobs-limits), [Profiles limits](#profiles-limits), [Subagents limits](#subagents-limits), [Worktree limits](#worktree-limits), and [MCP limits](#mcp-limits).
 
 ### `get_snapshot`
 
@@ -939,6 +939,33 @@ The answer carries the owner's real shape — `root`, optional `branch`, and `mo
 
 `file.path` is relative to `root`; `status` is one of `modified`, `added`, `deleted`, `renamed`, `untracked`. An untracked file carries `countsUnavailable` until its lines were actually counted — `added: 0` is never the only signal for it. A clean root answers an empty `model` and no `branch` claim. The states Gentle Shell labels are part of the contract: a root whose scan failed answers `{ "root": "…", "failed": true }`, and a root with no commits yet answers `{ "root": "…", "unborn": true }` — each with no `model`, never zero files or zero lines. `branch` is `unknown` when the root's own branch cannot be read. The method has no event.
 
+### `mcp_status`
+
+Returns MCP inventory — names only, no connection state. It reads three existing owners: the single `<agentDir>/mcp.json` reader (`lib/mcp-config.ts`, the same read the startup banner renders), `pi.getMcpServers()` for servers registered by extensions, and the `mcp__<server>__<tool>` tool names `pi.getAllTools()` already exposes. The method takes no params; any other key is `invalid_request` and nothing is read:
+
+```json
+{ "schema": "gentle-shell.desktop-rpc/v1", "requestId": "desktop-65", "method": "mcp_status", "params": {} }
+```
+
+```json
+{
+  "schema": "gentle-shell.desktop-rpc/v1",
+  "kind": "response",
+  "requestId": "desktop-65",
+  "ok": true,
+  "data": {
+    "health": "unknown",
+    "configured": { "status": "ok", "names": ["dev-docs"] },
+    "registered": ["jira"],
+    "namespaces": ["dev_docs", "jira"]
+  }
+}
+```
+
+`configured` is the single reader's own answer. Its `status` is the state of one local file read — `ok` (a readable config; zero names when none are configured), `absent` (no `mcp.json`), or `unusable` (a file that exists but is unparsable or not the shape Pi loads) — never a connection state. `registered` and `namespaces` are plain name lists; a namespace is the exact server segment of a tool name, so it can differ in spelling from the configured name that produced it (`dev-docs` becomes `dev_docs`). The three lists are independent inventories, not a readiness set.
+
+`health` is the frozen `"unknown"` literal on every answer. No field implies a connection state: the pi builds this repository resolves expose no MCP status API, and configured counts and `getAllTools()` are not connection health (see [`docs/mcp-status.md`](mcp-status.md)). The method has no event.
+
 ## Responses
 
 Success:
@@ -1255,6 +1282,13 @@ Follows an `apply_profile` answer whose `status` is `applied`, after the respons
 - **Counts are labeled, never silent zeros.** An untracked file never appears in `diff --numstat` (`lib/shell-changes.ts:118` would answer `added: 0` for it), and the shell's per-file untracked-line counter is private to the shell extension, so without a counter nothing measured its lines: the projection labels every unmeasured untracked file `countsUnavailable` instead of letting `added: 0` claim a measured zero, and recomputes `model.digest` over the labeled files. `model.added` and `model.deleted` stay the tracker's own sums of measured line counts (tracked files), the same numbers the footer renders with its partial-counts note. When a counter is wired, a measured untracked file answers with its real count and no label. Hoisting the real counter into `lib/` — a T0-style extraction, not this task — is the follow-up.
 - **Truthful absence.** Without a bound session, the method answers `worktree_unavailable` rather than an empty result.
 
+## MCP limits
+
+- **One owner, no second client.** Configured server names come from `lib/mcp-config.ts`, the single `mcp.json` reader the startup banner already consumes; registration names come from `pi.getMcpServers()`; namespaces come from `pi.getAllTools()`. There is no second MCP client, no connector, no probe, no network call, and no filesystem write: the inventory only reads, and the read-only proof pins that no file changes and no registration API is called.
+- **Inventory, not health.** `health` is always `"unknown"` and no field implies a connection state. `configured.status` is the state of one local JSON read (`ok`/`absent`/`unusable`), never connectivity; the distinction is surfaced so a broken config is never rendered as a healthy zero. A truthful health report waits for a pi status API.
+- **Names only.** Server URLs, headers, tokens, environment values, tool arguments, extension paths and raw errors never cross the contract — the answer carries names and nothing else.
+- **Truthful absence.** Without a bound session, the method answers `mcp_unavailable` rather than an empty inventory.
+
 ## Verification
 
 ```sh
@@ -1268,6 +1302,7 @@ node --experimental-strip-types --test \
   tests/desktop-rpc-agents.test.ts \
   tests/desktop-rpc-profiles.test.ts \
   tests/desktop-rpc-worktree.test.ts \
+  tests/desktop-rpc-mcp.test.ts \
   tests/maintainer/desktop-rpc.maintest.ts
 ```
 
