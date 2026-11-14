@@ -52,6 +52,7 @@ import { resolveHistoryCapture, writeHistoryCapturePolicy } from "../lib/history
 import { HERDR_TASK_SUMMARY_CHANGED, resolveHerdrTaskSummarySettings, writeHerdrTaskSummarySettings } from "../lib/herdr-task-summary-policy.ts";
 import { createRequire } from "node:module";
 import { createVimEditorAdapter, isAuditedPiEditorVersion } from "../lib/vim-editor-adapter.ts";
+import { sessionCost } from "../lib/session-cost.ts";
 import { VimNormalEngine } from "../lib/vim-normal-engine.ts";
 import { VimOperatorEngine, type OperatorResult } from "../lib/vim-operator-engine.ts";
 import { VimVisualEngine } from "../lib/vim-visual-engine.ts";
@@ -294,28 +295,9 @@ function ambientDevBinary(): DevBinaryNotice | undefined {
 
 const defaultShellDeps: Omit<ShellDeps, "activeProfile"> = { fetch: (input, init) => globalThis.fetch(input, init), now: () => Date.now(), devBinary: ambientDevBinary, resolveWorktree: resolveSessionWorktree, gitRunner: (cwd, maxBuffer) => shellGitRunner(cwd, process.env, execFile, maxBuffer), rootExists: (root) => existsSync(join(root, ".git")) };
 
-interface AssistantUsageEntry {
-	type: string;
-	message?: {
-		role?: string;
-		usage?: {
-			cost?: { total?: number };
-		};
-	};
-}
-
 function shortenHome(cwd: string, home: string | undefined): string {
 	if (home && cwd.startsWith(home)) return `~${cwd.slice(home.length)}`;
 	return cwd;
-}
-
-function sessionCost(ctx: ExtensionContext): number {
-	let total = 0;
-	for (const entry of ctx.sessionManager.getEntries() as AssistantUsageEntry[]) {
-		if (entry.type !== "message" || entry.message?.role !== "assistant") continue;
-		total += entry.message.usage?.cost?.total ?? 0;
-	}
-	return total;
 }
 
 type ShellSessionStats = { costTotal: number; usage: ReturnType<ExtensionContext["getContextUsage"]> };
