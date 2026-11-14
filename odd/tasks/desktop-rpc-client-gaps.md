@@ -27,7 +27,7 @@ S10. High-risk items: item 3 for `get_worktree_changes` and `mcp_status` only if
 
 ## Tasks
 
-T0 | S2,S4,S9 | slice: prerequisite — hoist the `<agentDir>/mcp.json` read out of `extensions/startup-banner.ts` into a shared `lib/` reader the banner consumes; regression test pins the current banner output; no contract or schema change | pending | route: inline, own commit | commit: pending.
+T0 | S2,S4,S9 | slice: prerequisite — hoist the `<agentDir>/mcp.json` read out of `extensions/startup-banner.ts` into a shared `lib/` reader the banner consumes; regression test pins the current banner output; no contract or schema change | done | route: inline, own commit | commit: 02dc6e8f7.
 T1 | S1-S3,S9 | slice: `get_worktree_changes` — new `lib/desktop-rpc-worktree.ts`, `DESKTOP_WORKTREE_METHODS`, router array entry, doc section + limits, tests with a fake git runner pair (discovery + per-root) | pending | route: delegated writer with independent verification (read-only git boundary) | commit: pending.
 T2 | S1-S2,S4,S8-S9 | slice: `mcp_status` inventory — consumes the T0 reader and `getMcpServers`/`getAllTools`; no health field beyond `"unknown"`; own test file | pending | route: delegated writer; blocked until T0 lands | commit: pending.
 T3 | S1-S2,S5,S9 | slice: `get_active_profile` — binds the reader, returns the session-effective label plus the global active name; carries the differ-from-global acceptance test and is deleted instead of delivered if it cannot differ | pending | route: inline, repriced after bind semantics | commit: pending.
