@@ -67,7 +67,7 @@ test("capabilities and snapshots use correlated structured responses", async (t)
 			command: "gentle:desktop",
 			widget: DESKTOP_RPC_WIDGET,
 			methods: ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "apply_profile", "list_subagents", "cancel_subagent", "get_worktree_changes", "mcp_status", "get_active_profile", "tool_vocabulary"],
-			events: ["config_changed", "permission_mode_changed", "rate_limit", "design_canvas", "jobs_update", "profile_applied", "agents_update"],
+			events: ["config_changed", "permission_mode_changed", "rate_limit", "design_canvas", "jobs_update", "profile_applied", "agents_update", "session_state_changed"],
 		},
 	});
 

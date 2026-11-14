@@ -63,11 +63,11 @@ Returns the currently implemented contract; clients must not infer support from 
   "command": "gentle:desktop",
   "widget": "gentle-desktop-rpc",
   "methods": ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "apply_profile", "list_subagents", "cancel_subagent", "get_worktree_changes", "mcp_status", "get_active_profile", "tool_vocabulary"],
-  "events": ["config_changed", "permission_mode_changed", "rate_limit", "design_canvas", "jobs_update", "profile_applied", "agents_update"]
+  "events": ["config_changed", "permission_mode_changed", "rate_limit", "design_canvas", "jobs_update", "profile_applied", "agents_update", "session_state_changed"]
 }
 ```
 
-The permission methods, the bounded config read and write, the subscription-usage read and refresh, the design-canvas read, the background-jobs list and cancel, the profile apply, the subagents list and cancel, the worktree-changes read, the MCP inventory read, the active-profile read, the tool-vocabulary read, and the `config_changed`, `permission_mode_changed`, `rate_limit`, `design_canvas`, `jobs_update`, `profile_applied`, and `agents_update` events are advertised because this extension wires them. `set_config` and `config_changed` are advertised only because the config bridge actually implements that writer — advertising is not a forward-looking wish list. The design slice advertises exactly its one read method and its one transition event, not the canvas `open`/`stop` actions, which stay the `gentle_design` tool's job. The jobs slice advertises exactly its list and cancel methods and its one registry-change event, not the `bash_background`/`monitor` start tools, which stay agent tools. The profiles slice advertises exactly its one apply method and its one applied event; profile edits stay `set_config`. The subagents slice advertises exactly its list and cancel methods and its one transition event, not the agent dispatch tools, which stay agent tools. The worktree slice advertises exactly its one read method and no event. The MCP slice advertises exactly its one read method and no event. The active-profile slice advertises exactly its one read method and no event. The tool-vocabulary slice advertises exactly its one read method and no event. Method availability is not a claim that every dependency is loaded — see [Permission limits](#permission-limits), [Configuration limits](#configuration-limits), [Usage limits](#usage-limits), [Design limits](#design-limits), [Jobs limits](#jobs-limits), [Profiles limits](#profiles-limits), [Subagents limits](#subagents-limits), [Worktree limits](#worktree-limits), [MCP limits](#mcp-limits), [Active profile limits](#active-profile-limits), and [Tool vocabulary limits](#tool-vocabulary-limits).
+The permission methods, the bounded config read and write, the subscription-usage read and refresh, the design-canvas read, the background-jobs list and cancel, the profile apply, the subagents list and cancel, the worktree-changes read, the MCP inventory read, the active-profile read, the tool-vocabulary read, and the `config_changed`, `permission_mode_changed`, `rate_limit`, `design_canvas`, `jobs_update`, `profile_applied`, `agents_update`, and `session_state_changed` events are advertised because this extension wires them. The session-state slice advertises exactly its one push event and no read method: it exists so a client never polls during a run, and adding a state-read alongside it would rebuild the polling it removes. `set_config` and `config_changed` are advertised only because the config bridge actually implements that writer — advertising is not a forward-looking wish list. The design slice advertises exactly its one read method and its one transition event, not the canvas `open`/`stop` actions, which stay the `gentle_design` tool's job. The jobs slice advertises exactly its list and cancel methods and its one registry-change event, not the `bash_background`/`monitor` start tools, which stay agent tools. The profiles slice advertises exactly its one apply method and its one applied event; profile edits stay `set_config`. The subagents slice advertises exactly its list and cancel methods and its one transition event, not the agent dispatch tools, which stay agent tools. The worktree slice advertises exactly its one read method and no event. The MCP slice advertises exactly its one read method and no event. The active-profile slice advertises exactly its one read method and no event. The tool-vocabulary slice advertises exactly its one read method and no event. Method availability is not a claim that every dependency is loaded — see [Permission limits](#permission-limits), [Configuration limits](#configuration-limits), [Usage limits](#usage-limits), [Design limits](#design-limits), [Jobs limits](#jobs-limits), [Profiles limits](#profiles-limits), [Subagents limits](#subagents-limits), [Worktree limits](#worktree-limits), [MCP limits](#mcp-limits), [Active profile limits](#active-profile-limits), and [Tool vocabulary limits](#tool-vocabulary-limits).
 
 ### `get_snapshot`
 
@@ -1255,6 +1255,37 @@ Follows an `apply_profile` answer whose `status` is `applied`, after the respons
 
 `source` is always `desktop`: an apply from the `/gentle:profiles` screen emits nothing on this channel. `confirmation_required`, `not_applied`, and every error emit nothing. Clients that show profile state should re-read `get_config` for `profiles` after this event.
 
+### `session_state_changed`
+
+Carries the session's effective state — model, thinking level, and context usage — so a connected Desktop client never polls during a run. It is emitted only at the settle points pi itself reports (`turn_end`, `model_select`, `thinking_level_select`, `session_compact`, `session_tree`): each settle produces at most one event, carrying the full current projection, and only when at least one field differs from the last delivered one. Traffic inside a turn is never sampled, there is no timer, no read method, and no polling contract — a client that reconnects or detects a sequence gap re-reads nothing and simply waits for the next settle point, which re-delivers the whole state.
+
+Availability is per field, and an unavailable value is omitted, never sent as `0` or any placeholder — a client must be able to tell "no value" from "zero":
+
+| Field | Owner (read, never recomputed) | Omitted when |
+| --- | --- | --- |
+| `model` | `ctx.model.id`, the same effective model the shell footer shows | no model is active |
+| `thinkingLevel` | `pi.getThinkingLevel()`, the level the session is running, read only when the effective model supports reasoning | the model has no reasoning support or reports no level |
+| `context.tokens`, `context.percent` | pi's own `ctx.getContextUsage()` | pi reports `null` (for example right after compaction, before the next response) |
+| `context.contextWindow` | `ctx.getContextUsage().contextWindow`, falling back to `ctx.model.contextWindow` exactly as the footer reads it | neither owner provides one |
+
+`model` and `thinkingLevel` are the effective values the session is running, never the ones requested: a change or restore is read back through the same accessors the footer renders, so the event always names what the session would actually use. A legitimate `0` from an owner (a fresh context reporting zero tokens or zero percent) is kept — the rule omits unavailability, not zero. The payload carries no cost: the session cost is computed only inside the shell footer's own closure (`sessionCost` in `extensions/gentle-shell.ts`), this contract forbids a second counter, and pi exposes no cost accessor to the extension surface — the event can grow the field the day the value becomes reachable through an existing owner.
+
+```json
+{
+  "schema": "gentle-shell.desktop-rpc/v1",
+  "kind": "event",
+  "seq": 2,
+  "event": "session_state_changed",
+  "data": {
+    "model": "anthropic/claude-opus-4-6",
+    "thinkingLevel": "high",
+    "context": { "tokens": 48211, "percent": 17.7, "contextWindow": 272000 }
+  }
+}
+```
+
+The event rides the same router sequencer as every other event: `seq` keeps the documented contract, nothing here renumbers an existing event, and no response line is displaced — the event is emitted from a settle point, never from a request, so the response-before-event ordering of the other slices is untouched.
+
 ## Configuration limits
 
 - **One reader and one writer per store.** Each `get_config` answer and each `set_config` write comes from the module that already owns that file (`agent-profiles.ts`, `model-routing-authority.ts`, `model-fallback-store.ts`, `agents-config.ts`, `agent-profile-pin.ts`, `agent-assets.ts`). There is no second store, no cached copy, no parallel parser, no shadow precedence, and no re-implemented invariant: the merge rules are the owner's own (`readSavedModelConfig`, `parseAgentsConfig`, `evaluateProfilePin`) and the writes are the owner's validated atomic writers (`writeProfilesFileSync`, `writeFallbacksFile`, `writeProfilePinSync`).
@@ -1374,6 +1405,7 @@ node --experimental-strip-types --test \
   tests/desktop-rpc-worktree.test.ts \
   tests/desktop-rpc-mcp.test.ts \
   tests/desktop-rpc-profile.test.ts \
+  tests/desktop-rpc-session-state.test.ts \
   tests/maintainer/desktop-rpc.maintest.ts
 ```
 
@@ -1388,6 +1420,8 @@ The jobs tests use the existing background-job fake (the same fake shell operati
 The subagents tests use a real `TaskStore` plus a fake runner (never a child process) and a fake owner service only: they cover the whitelisted model/usage/cost projection and field redaction, the closed `lastStep` vocabulary (raw error/path/secret/provider text never crosses), the bounded active + recent-finished selection, list/cancel param shapes, the active-session filter, owner absence (`agents_unavailable`, never a fabricated empty list), the `runner.cancel` stop path and its boolean result, already-terminal idempotency with no event, unknown and foreign-session `not_found`, invalid params rejected before discovery, agent-driven `agents_update` events with foreign-session filtering, content dedupe and burst coalescing, the response-before-event order over the router, session reset disconnecting observers and dropping late outcomes, late-discovery disposal, and the versioned adapter discovery. They also run the real `gentleAgents` owner seam in-process over a fake child (real `TaskStore` + real `AgentRunner`, never a real process): a truthful empty list, a typed `not_found` cancel, a live-task cancel that honors `runner.cancel`'s result with no immediate event and one eventual `agents_update`, and the persisted usage breakdown surviving `saveTask`/`loadStoredTask` restore.
 
 The profiles tests use a fake owner service only: they cover param validation, owner absence (`profiles_unavailable`), the result shapes, the `profile_applied` event only after `applied`, and that the token changes with the mode, name, title, message, and profile content. The owner itself is covered in `tests/gentle-ai.test.ts`, which drives the real screen actions in a temporary config home: a default apply asks the screen's diff and writes nothing without its token, a wrong or stale token asks again and writes nothing, an unknown profile writes nothing, a session apply binds without writing shared state, and only one apply runs at a time.
+
+The session-state tests fake only pi's event bus and a context carrying the real owners: they cover the advertised event name beside the unchanged existing order, the full payload with every field available, each field omitted when unavailable (a state with nothing available emits nothing, and a legitimate owner `0` is kept), the footer's model-window fallback, the effective-not-requested reads of model and thinking after `model_select`/`thinking_level_select`, one event per coalesced settle and silence when nothing changed, the absence of any subscription to in-turn traffic, the `seq` contract riding the shared sequencer without disturbing the response contract, the reset/rewire lifecycle, and that no `cost` key ever crosses. The doc-conformance rule — availability per field, coalescing, and the untouched `seq` ordering — is pinned by these tests and the strict capability arrays.
 
 The worktree tests fake both runners the owner tracker takes — discovery and the per-root factory — and no git process ever runs: they cover the param shapes and the session-roots gate (malformed and `unknown_root` answers with zero git calls), the owner's real response shapes (`branch` beside `model.added`/`model.deleted`/`digest`, with the `countsUnavailable` label replacing an unmeasured untracked zero and a wired counter answering measured counts with no label), the `failed`, `unborn`, and `unknown`-branch labels with no model, the clean-root empty model, the bridge's session gating, reset absence, and per-root runner targeting, the per-domain exact capabilities array, an answer through the real router, and the read-only proof that a scan runs exactly the four per-root read-only git vectors and nothing else, plus the assertion that a root discovery cannot describe adds only the read-only branch probe.
 

@@ -29,6 +29,7 @@ import { DESKTOP_WORKTREE_METHODS, DesktopWorktreeBridge } from "../lib/desktop-
 import { DESKTOP_MCP_METHODS, DesktopMcpBridge } from "../lib/desktop-rpc-mcp.ts";
 import { DESKTOP_PROFILE_METHODS, DesktopProfileBridge } from "../lib/desktop-rpc-profile.ts";
 import { DESKTOP_TOOLS_METHODS, DesktopToolsBridge } from "../lib/desktop-rpc-tools.ts";
+import { DESKTOP_SESSION_STATE_EVENTS, DesktopSessionStateBridge } from "../lib/desktop-rpc-session-state.ts";
 import { readMcpServerNamesDetailed } from "../lib/mcp-config.ts";
 import { shellGitRunner } from "./gentle-shell.ts";
 import { isInteractiveRpcHost } from "../lib/rpc-host.ts";
@@ -60,7 +61,11 @@ export default function desktopRpc(pi: ExtensionAPI) {
 	// registrations and tool names; the tool-vocabulary read publishes the native
 // action classification as pure data from the single vocabulary owner
 // (lib/tool-vocabulary.ts) the quiet-tools, gentle-agents and gentle-ai render
-// modules also consume. None has a store of its own.
+// modules also consume. The session-state event re-reads the owners the shell
+// footer already reads (`ctx.model`, `pi.getThinkingLevel()`,
+// `ctx.getContextUsage()`) at pi's own settle points and emits only on a real
+// change, with no counter, sampler or timer of its own. None has a store of
+// its own.
 	const permissions = new DesktopPermissionBridge(pi);
 	const config = new DesktopConfigBridge();
 	const usage = new DesktopUsageBridge(pi);
@@ -72,6 +77,7 @@ export default function desktopRpc(pi: ExtensionAPI) {
 	const mcp = new DesktopMcpBridge(readMcpServerNamesDetailed, pi);
 	const profile = new DesktopProfileBridge();
 	const tools = new DesktopToolsBridge();
+	const sessionState = new DesktopSessionStateBridge(pi);
 	const domain: DesktopRpcDomain = (method, params) => {
 		// Config and tools are the only synchronous bridges; permission, usage,
 		// design, jobs, profiles, agents, mcp, profile, and worktree answers are
@@ -105,7 +111,7 @@ export default function desktopRpc(pi: ExtensionAPI) {
 		["capabilities", "get_snapshot", ...DESKTOP_CONFIG_METHODS, ...DESKTOP_PERMISSION_METHODS, ...DESKTOP_USAGE_METHODS, ...DESKTOP_DESIGN_METHODS, ...DESKTOP_JOBS_METHODS, ...DESKTOP_PROFILES_METHODS, ...DESKTOP_AGENTS_METHODS, ...DESKTOP_WORKTREE_METHODS, ...DESKTOP_MCP_METHODS, ...DESKTOP_PROFILE_METHODS, ...DESKTOP_TOOLS_METHODS],
 		// Method order is the documented contract; keep the capabilities arrays in
 		// `docs/desktop-rpc.md` and `tests/maintainer/desktop-rpc.maintest.ts` identical.
-		[...DESKTOP_CONFIG_EVENTS, DESKTOP_PERMISSION_EVENT, ...DESKTOP_USAGE_EVENTS, ...DESKTOP_DESIGN_EVENTS, ...DESKTOP_JOBS_EVENTS, ...DESKTOP_PROFILES_EVENTS, ...DESKTOP_AGENTS_EVENTS],
+		[...DESKTOP_CONFIG_EVENTS, DESKTOP_PERMISSION_EVENT, ...DESKTOP_USAGE_EVENTS, ...DESKTOP_DESIGN_EVENTS, ...DESKTOP_JOBS_EVENTS, ...DESKTOP_PROFILES_EVENTS, ...DESKTOP_AGENTS_EVENTS, ...DESKTOP_SESSION_STATE_EVENTS],
 		() => config.snapshotState(),
 		domain,
 	);
@@ -121,6 +127,7 @@ export default function desktopRpc(pi: ExtensionAPI) {
 		mcp.reset();
 		profile.reset();
 		worktree.reset();
+		sessionState.reset();
 		router.stop();
 		if (!isInteractiveRpcHost(ctx.mode)) return;
 		design.attach(ctx);
@@ -145,6 +152,10 @@ export default function desktopRpc(pi: ExtensionAPI) {
 		// request still reaches the app.
 		agents.wire((event, data) => router.emit(event, data));
 		void agents.start();
+		// Settled session state (effective model, thinking level, context usage)
+		// becomes ordered `session_state_changed` events through the router, so a
+		// Desktop client never polls during a run.
+		sessionState.wire((event, data) => router.emit(event, data));
 	});
 
 	pi.on("session_shutdown", () => {
@@ -157,6 +168,7 @@ export default function desktopRpc(pi: ExtensionAPI) {
 		agents.reset();
 		profile.reset();
 		worktree.reset();
+		sessionState.reset();
 		router.stop();
 	});
 
