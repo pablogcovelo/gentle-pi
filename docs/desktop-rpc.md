@@ -62,12 +62,12 @@ Returns the currently implemented contract; clients must not infer support from 
   "schema": "gentle-shell.desktop-rpc/v1",
   "command": "gentle:desktop",
   "widget": "gentle-desktop-rpc",
-  "methods": ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "apply_profile", "list_subagents", "cancel_subagent", "get_worktree_changes", "mcp_status"],
+  "methods": ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "apply_profile", "list_subagents", "cancel_subagent", "get_worktree_changes", "mcp_status", "get_active_profile"],
   "events": ["config_changed", "permission_mode_changed", "rate_limit", "design_canvas", "jobs_update", "profile_applied", "agents_update"]
 }
 ```
 
-The permission methods, the bounded config read and write, the subscription-usage read and refresh, the design-canvas read, the background-jobs list and cancel, the profile apply, the subagents list and cancel, the worktree-changes read, and the `config_changed`, `permission_mode_changed`, `rate_limit`, `design_canvas`, `jobs_update`, `profile_applied`, and `agents_update` events are advertised because this extension wires them. `set_config` and `config_changed` are advertised only because the config bridge actually implements that writer — advertising is not a forward-looking wish list. The design slice advertises exactly its one read method and its one transition event, not the canvas `open`/`stop` actions, which stay the `gentle_design` tool's job. The jobs slice advertises exactly its list and cancel methods and its one registry-change event, not the `bash_background`/`monitor` start tools, which stay agent tools. The profiles slice advertises exactly its one apply method and its one applied event; profile edits stay `set_config`. The subagents slice advertises exactly its list and cancel methods and its one transition event, not the agent dispatch tools, which stay agent tools. The worktree slice advertises exactly its one read method and no event. The MCP slice advertises exactly its one read method and no event. Method availability is not a claim that every dependency is loaded — see [Permission limits](#permission-limits), [Configuration limits](#configuration-limits), [Usage limits](#usage-limits), [Design limits](#design-limits), [Jobs limits](#jobs-limits), [Profiles limits](#profiles-limits), [Subagents limits](#subagents-limits), [Worktree limits](#worktree-limits), and [MCP limits](#mcp-limits).
+The permission methods, the bounded config read and write, the subscription-usage read and refresh, the design-canvas read, the background-jobs list and cancel, the profile apply, the subagents list and cancel, the worktree-changes read, the MCP inventory read, the active-profile read, and the `config_changed`, `permission_mode_changed`, `rate_limit`, `design_canvas`, `jobs_update`, `profile_applied`, and `agents_update` events are advertised because this extension wires them. `set_config` and `config_changed` are advertised only because the config bridge actually implements that writer — advertising is not a forward-looking wish list. The design slice advertises exactly its one read method and its one transition event, not the canvas `open`/`stop` actions, which stay the `gentle_design` tool's job. The jobs slice advertises exactly its list and cancel methods and its one registry-change event, not the `bash_background`/`monitor` start tools, which stay agent tools. The profiles slice advertises exactly its one apply method and its one applied event; profile edits stay `set_config`. The subagents slice advertises exactly its list and cancel methods and its one transition event, not the agent dispatch tools, which stay agent tools. The worktree slice advertises exactly its one read method and no event. The MCP slice advertises exactly its one read method and no event. The active-profile slice advertises exactly its one read method and no event. Method availability is not a claim that every dependency is loaded — see [Permission limits](#permission-limits), [Configuration limits](#configuration-limits), [Usage limits](#usage-limits), [Design limits](#design-limits), [Jobs limits](#jobs-limits), [Profiles limits](#profiles-limits), [Subagents limits](#subagents-limits), [Worktree limits](#worktree-limits), [MCP limits](#mcp-limits), and [Active profile limits](#active-profile-limits).
 
 ### `get_snapshot`
 
@@ -966,6 +966,28 @@ Returns MCP inventory — names only, no connection state. It reads three existi
 
 `health` is the frozen `"unknown"` literal on every answer. No field implies a connection state: the pi builds this repository resolves expose no MCP status API, and configured counts and `getAllTools()` are not connection health (see [`docs/mcp-status.md`](mcp-status.md)). The method has no event.
 
+### `get_active_profile`
+
+Returns the agent-model profile label the session's footer already shows — the session-effective label, not the global default — beside the global `active` name from `profiles.json`, so a client can tell them apart. It resolves the session's own profile through the same single precedence rule the footer's reader applies (`resolveSessionProfile`, spelled by `sessionProfileLabel`): an explicit session binding, a frozen startup profile, a local pin, a repository declaration, or the global default. It is never an account identity, and it reads only: no binding, pin, store, or routing is written.
+
+```json
+{ "schema": "gentle-shell.desktop-rpc/v1", "requestId": "desktop-66", "method": "get_active_profile", "params": {} }
+```
+
+The method takes no params; any other key is `invalid_request` and nothing is read.
+
+```json
+{
+  "schema": "gentle-shell.desktop-rpc/v1",
+  "kind": "response",
+  "requestId": "desktop-66",
+  "ok": true,
+  "data": { "label": "solo (session)", "active": "team" }
+}
+```
+
+`label` is the session-effective spelling the footer renders: `name (session)` for an explicit binding, `name (local)` for a local pin, `name (repo)` for a repository declaration, or the bare global name when the session uses the global default. `active` is the bare global `active` name from `profiles.json`. A session whose effective profile is the global default answers `label` equal to `active`; a bound or pinned session answers a distinguishable `label` — that is the point of the method. A field the owners do not yield is omitted, never fabricated: without a usable global store `active` is absent, a label the resolution does not produce is absent, and when no layer has a profile at all both fields are omitted (the store's own normalizer already drops a stale `active` marker, so that reads as absent too). The first request for a session freezes that session's inherited profile exactly as the footer's first render does — the same owner call, not a second one. The method has no event.
+
 ## Responses
 
 Success:
@@ -995,7 +1017,7 @@ Failure:
 }
 ```
 
-Current error codes are `invalid_request`, `unknown_store`, `read_only`, `invalid_data`, `revision_conflict`, `write_failed`, `unsupported_method`, `permission_unavailable`, `permission_denied`, `config_unavailable`, `usage_unavailable`, `design_unavailable`, `jobs_unavailable`, `agents_unavailable`, `profiles_unavailable`, `unknown_profile`, `profile_apply_busy`, `not_found`, and `internal_error`. A request that cannot supply a valid correlation ID uses `requestId: null`. State/provider failures use the generic `internal_error` message rather than exposing raw paths, credentials, or provider errors. Transport failures from `setWidget` are never retried as a second response.
+Current error codes are `invalid_request`, `unknown_store`, `read_only`, `invalid_data`, `revision_conflict`, `write_failed`, `unsupported_method`, `permission_unavailable`, `permission_denied`, `config_unavailable`, `usage_unavailable`, `design_unavailable`, `jobs_unavailable`, `agents_unavailable`, `profiles_unavailable`, `unknown_profile`, `profile_apply_busy`, `profile_unavailable`, `not_found`, and `internal_error`. A request that cannot supply a valid correlation ID uses `requestId: null`. State/provider failures use the generic `internal_error` message rather than exposing raw paths, credentials, or provider errors. Transport failures from `setWidget` are never retried as a second response.
 
 | Code | Meaning |
 | --- | --- |
@@ -1289,6 +1311,14 @@ Follows an `apply_profile` answer whose `status` is `applied`, after the respons
 - **Names only.** Server URLs, headers, tokens, environment values, tool arguments, extension paths and raw errors never cross the contract — the answer carries names and nothing else.
 - **Truthful absence.** Without a bound session, the method answers `mcp_unavailable` rather than an empty inventory.
 
+## Active profile limits
+
+- **One owner, no second resolution.** The label is `sessionProfileLabel` over `resolveSessionProfile` — the same single precedence rule and spelling the footer's reader (`extensions/gentle-shell.ts`) applies. There is no second resolution implementation, no second reader instance, and no cache: each request resolves once, resolves the worktree identity once like the reader's `bind` does, and reads the global `active` name through the profiles store owner (`lib/agent-profiles.ts`), the same read the reader's `global()` performs.
+- **Read-only.** No binding, pin, profile store, or routing is written. The only in-process effect is the shared freeze rule the owner already applies on a session's first resolution — the same call the footer's first render makes; nothing is persisted and no file changes.
+- **Session state, never identity.** The answer describes the agent-model profile the session launches with; it is not an account identity and carries no user, session path, or working directory.
+- **Truthful absence.** Without a bound session context the method answers `profile_unavailable` rather than an empty label; a label or global name the owners do not yield is omitted, never invented.
+- **Apply still goes through the screen.** A client that wants to change the profile uses `apply_profile` (or `set_config` for the stores); this read never applies, pins, or materializes anything.
+
 ## Verification
 
 ```sh
@@ -1303,6 +1333,7 @@ node --experimental-strip-types --test \
   tests/desktop-rpc-profiles.test.ts \
   tests/desktop-rpc-worktree.test.ts \
   tests/desktop-rpc-mcp.test.ts \
+  tests/desktop-rpc-profile.test.ts \
   tests/maintainer/desktop-rpc.maintest.ts
 ```
 
@@ -1321,6 +1352,8 @@ The profiles tests use a fake owner service only: they cover param validation, o
 The worktree tests fake both runners the owner tracker takes — discovery and the per-root factory — and no git process ever runs: they cover the param shapes and the session-roots gate (malformed and `unknown_root` answers with zero git calls), the owner's real response shapes (`branch` beside `model.added`/`model.deleted`/`digest`, with the `countsUnavailable` label replacing an unmeasured untracked zero and a wired counter answering measured counts with no label), the `failed`, `unborn`, and `unknown`-branch labels with no model, the clean-root empty model, the bridge's session gating, reset absence, and per-root runner targeting, the per-domain exact capabilities array, an answer through the real router, and the read-only proof that a scan runs exactly the four per-root read-only git vectors and nothing else, plus the assertion that a root discovery cannot describe adds only the read-only branch probe.
 
 The config tests build six stores in a temporary root and inject the worktree identity, so no real user config, agent home, or repository pin is read. On the read side they cover every store, current path precedence, missing and malformed layers, revision stability and change, the read-only split, rejected stores/params/paths, the bounded snapshot projection, and a byte-and-mtime comparison proving a read never mutates a store. On the write side they cover a valid write for each writable store and both pin layers, clearing either pin layer and observing the winner fall back, clearing an already-missing layer as a no-op, clearing and replacing an unreadable layer, creating a missing store, a stale or missing `expectedRevision` (including on a clear), the documented rejection order (envelope, then store identity, then mutability, then revision, then payload), data the owner would drop, malformed pin clear shapes, extra and physical-path keys, every read-only store, a forced owner write failure (the store path is a directory) answering `write_failed` with no path, OS code, or event and an unchanged tree, the no-op path with untouched bytes and mtime, the resulting disk bytes, revision movement and its invalid-state coarseness, the response-then-event order over the real transport, and that a stopped session neither answers nor writes. They also re-check that the config dispatcher still falls through to the permission bridge.
+
+The profile tests use temporary stores and the real resolution owner only (`resolveSessionProfile`, `sessionProfileLabel`, the profiles store owner): they cover malformed params rejected before any owner is read, the unbound session's bare global name, the no-profile-configured and stale-active truthful absences, the exact footer spellings (`name (session)`, `name (local)`, `name (repo)`, the bare global name), the differ-from-global acceptance test (with a profile bound to the session the response differs from `get_config{store:"profiles"}.active`, including when the bound name equals the global one), the read-only proof (no store, pin, or binding byte or mtime moves), the bridge's session gating and unavailability, the per-domain exact capabilities array, and an answer through the real router with no event.
 
 The maintainer probes run the installed Pi runtime with isolated HOME, agent home, config home, session, and temporary directories and no provider or network. They cover:
 

@@ -27,6 +27,7 @@ import { DesktopAgentsBridge } from "../lib/desktop-agents-service.ts";
 import { DESKTOP_PROFILES_EVENTS, DESKTOP_PROFILES_METHODS, DesktopProfilesBridge } from "../lib/desktop-rpc-profiles.ts";
 import { DESKTOP_WORKTREE_METHODS, DesktopWorktreeBridge } from "../lib/desktop-rpc-worktree.ts";
 import { DESKTOP_MCP_METHODS, DesktopMcpBridge } from "../lib/desktop-rpc-mcp.ts";
+import { DESKTOP_PROFILE_METHODS, DesktopProfileBridge } from "../lib/desktop-rpc-profile.ts";
 import { readMcpServerNamesDetailed } from "../lib/mcp-config.ts";
 import { shellGitRunner } from "./gentle-shell.ts";
 import { isInteractiveRpcHost } from "../lib/rpc-host.ts";
@@ -49,7 +50,10 @@ export default function desktopRpc(pi: ExtensionAPI) {
 	// existing parent-session job registry and monitor controller; subagents
 	// list/cancel delegate to the existing parent-session TaskStore and
 	// AgentRunner; profile applies delegate to the existing `/gentle:profiles`
-	// owner and its own apply actions; worktree changes delegate to the existing
+	// owner and its own apply actions; the active-profile read resolves the
+	// session-effective label through the same single session-profile precedence
+	// rule and spelling the footer's reader applies, beside the global `active`
+	// name from the profiles store owner; worktree changes delegate to the existing
 	// Gentle Shell changes tracker through the same runner factory every shell
 	// scan uses; MCP inventory reads the single mcp.json reader, extension
 	// registrations and tool names. None has a store of its own.
@@ -62,10 +66,11 @@ export default function desktopRpc(pi: ExtensionAPI) {
 	const profiles = new DesktopProfilesBridge(pi);
 	const worktree = new DesktopWorktreeBridge(shellGitRunner);
 	const mcp = new DesktopMcpBridge(readMcpServerNamesDetailed, pi);
+	const profile = new DesktopProfileBridge();
 	const domain: DesktopRpcDomain = (method, params) => {
 		// Config is the only synchronous bridge; permission, usage, design, jobs,
-		// profiles, agents, mcp, and worktree answers are awaited in fall-through
-		// order, so an unknown method still resolves to the router's
+		// profiles, agents, mcp, profile, and worktree answers are awaited in
+		// fall-through order, so an unknown method still resolves to the router's
 		// `unsupported_method` instead of an early `undefined`.
 		const configOutcome = config.handle(method, params);
 		if (configOutcome !== undefined) return configOutcome;
@@ -84,11 +89,13 @@ export default function desktopRpc(pi: ExtensionAPI) {
 			if (agentsOutcome !== undefined) return agentsOutcome;
 			const worktreeOutcome = await worktree.handle(method, params);
 			if (worktreeOutcome !== undefined) return worktreeOutcome;
+			const profileOutcome = await profile.handle(method, params);
+			if (profileOutcome !== undefined) return profileOutcome;
 			return mcp.handle(method, params);
 		})();
 	};
 	const router = new DesktopRpcRouter(
-		["capabilities", "get_snapshot", ...DESKTOP_CONFIG_METHODS, ...DESKTOP_PERMISSION_METHODS, ...DESKTOP_USAGE_METHODS, ...DESKTOP_DESIGN_METHODS, ...DESKTOP_JOBS_METHODS, ...DESKTOP_PROFILES_METHODS, ...DESKTOP_AGENTS_METHODS, ...DESKTOP_WORKTREE_METHODS, ...DESKTOP_MCP_METHODS],
+		["capabilities", "get_snapshot", ...DESKTOP_CONFIG_METHODS, ...DESKTOP_PERMISSION_METHODS, ...DESKTOP_USAGE_METHODS, ...DESKTOP_DESIGN_METHODS, ...DESKTOP_JOBS_METHODS, ...DESKTOP_PROFILES_METHODS, ...DESKTOP_AGENTS_METHODS, ...DESKTOP_WORKTREE_METHODS, ...DESKTOP_MCP_METHODS, ...DESKTOP_PROFILE_METHODS],
 		// Method order is the documented contract; keep the capabilities arrays in
 		// `docs/desktop-rpc.md` and `tests/maintainer/desktop-rpc.maintest.ts` identical.
 		[...DESKTOP_CONFIG_EVENTS, DESKTOP_PERMISSION_EVENT, ...DESKTOP_USAGE_EVENTS, ...DESKTOP_DESIGN_EVENTS, ...DESKTOP_JOBS_EVENTS, ...DESKTOP_PROFILES_EVENTS, ...DESKTOP_AGENTS_EVENTS],
@@ -105,6 +112,7 @@ export default function desktopRpc(pi: ExtensionAPI) {
 		profiles.reset();
 		agents.reset();
 		mcp.reset();
+		profile.reset();
 		worktree.reset();
 		router.stop();
 		if (!isInteractiveRpcHost(ctx.mode)) return;
@@ -140,6 +148,7 @@ export default function desktopRpc(pi: ExtensionAPI) {
 		jobs.reset();
 		profiles.reset();
 		agents.reset();
+		profile.reset();
 		worktree.reset();
 		router.stop();
 	});
@@ -157,6 +166,7 @@ export default function desktopRpc(pi: ExtensionAPI) {
 			agents.attach(ctx);
 			mcp.attach(ctx);
 			worktree.attach(ctx);
+			profile.attach(ctx);
 			await router.handle(args);
 		},
 	});
