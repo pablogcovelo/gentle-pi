@@ -8,6 +8,7 @@
 // event when the projection differs from the last one it delivered.
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { readSessionCost } from "./session-cost.ts";
 
 export const DESKTOP_SESSION_STATE_EVENT = "session_state_changed";
 export const DESKTOP_SESSION_STATE_EVENTS = [DESKTOP_SESSION_STATE_EVENT] as const;
@@ -28,6 +29,10 @@ export interface DesktopSessionStateEvent {
 	model?: string;
 	thinkingLevel?: string;
 	context?: DesktopSessionContextUsage;
+	/** The session cost as `lib/session-cost.ts` reports it: present only when
+	 * the owner answers a number, so a fresh session's own `0` survives while an
+	 * unmeasurable session omits the field instead of claiming a zero. */
+	cost?: number;
 }
 
 /** The effective model as `ctx.model` exposes it (the footer's `modelId` read). */
@@ -52,6 +57,7 @@ export function projectSessionState(
 	model: EffectiveModel | undefined,
 	thinkingLevel: unknown,
 	usage: { tokens?: unknown; percent?: unknown; contextWindow?: unknown } | undefined,
+	cost?: unknown,
 ): DesktopSessionStateEvent {
 	const state: DesktopSessionStateEvent = {};
 	if (model && typeof model.id === "string" && model.id.length > 0) state.model = model.id;
@@ -64,6 +70,9 @@ export function projectSessionState(
 	if (usage && finiteNumber(usage.contextWindow)) context.contextWindow = usage.contextWindow;
 	else if (finiteNumber(model?.contextWindow) && (model?.contextWindow as number) > 0) context.contextWindow = model?.contextWindow as number;
 	if (Object.keys(context).length > 0) state.context = context;
+	// The cost owner answers `undefined` when it cannot measure, and that is
+	// unavailability: the field is omitted, never zeroed. A real `0` is a fact.
+	if (finiteNumber(cost)) state.cost = cost;
 	return state;
 }
 
@@ -151,7 +160,7 @@ export class DesktopSessionStateBridge {
 			}
 		}
 		const usage = typeof ctx.getContextUsage === "function" ? ctx.getContextUsage() : undefined;
-		const state = projectSessionState(model, thinkingLevel, usage);
+		const state = projectSessionState(model, thinkingLevel, usage, readSessionCost(ctx));
 		const canonical = JSON.stringify(state);
 		if (canonical === this.lastEmitted) return;
 		// Never open with an all-unavailable event: there is nothing to tell yet.

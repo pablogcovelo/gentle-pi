@@ -49,13 +49,16 @@ function fakePi(): FakePi {
 interface CtxOverrides {
 	model?: Record<string, unknown> | undefined;
 	usage?: Record<string, unknown> | undefined;
+	entries?: unknown[] | undefined;
 }
 
 function fakeCtx(overrides: CtxOverrides = {}): ExtensionContext {
 	return {
 		model: "model" in overrides ? overrides.model : { id: "anthropic/claude-opus-4-6", reasoning: true, contextWindow: 272_000 },
 		getContextUsage: () => ("usage" in overrides ? overrides.usage : { tokens: 48_211, contextWindow: 272_000, percent: 17.7 }),
-		sessionManager: { getSessionId: () => "session-1" },
+		sessionManager: "entries" in overrides
+			? { getSessionId: () => "session-1", getEntries: () => overrides.entries }
+			: { getSessionId: () => "session-1" },
 	} as unknown as ExtensionContext;
 }
 
@@ -120,7 +123,31 @@ test("a settled turn emits one event carrying model, thinking level and context"
 		thinkingLevel: "medium",
 		context: { tokens: 48_211, percent: 17.7, contextWindow: 272_000 },
 	});
-	assert.equal("cost" in emitted[0]!.data, false, "the event carries no cost key");
+	assert.equal("cost" in emitted[0]!.data, false, "a host with no session entries cannot be summed, so cost is omitted");
+});
+
+// ---- Cost: the owner's number, or nothing at all ----
+
+test("the settled event carries the session cost the owner reports", async () => {
+	const { bridge, emitted } = sessionStateBridge();
+	bridge.settle(fakeCtx({ entries: [
+		{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.25 } } } },
+		{ type: "message", message: { role: "assistant", usage: { cost: { total: 0.75 } } } },
+		{ type: "message", message: { role: "user" } },
+	] }));
+	assert.equal(emitted[0]!.data.cost, 1);
+});
+
+test("a session that spent nothing yet keeps the owner's zero", async () => {
+	const { bridge, emitted } = sessionStateBridge();
+	bridge.settle(fakeCtx({ entries: [] }));
+	assert.equal(emitted[0]!.data.cost, 0);
+});
+
+test("an unsummable host omits cost instead of claiming a zero", async () => {
+	const { bridge, emitted } = sessionStateBridge();
+	bridge.settle(fakeCtx());
+	assert.equal("cost" in emitted[0]!.data, false);
 });
 
 // ---- Availability is per field: unavailable is omitted, never zero ----
