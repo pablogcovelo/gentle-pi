@@ -62,12 +62,12 @@ Returns the currently implemented contract; clients must not infer support from 
   "schema": "gentle-shell.desktop-rpc/v1",
   "command": "gentle:desktop",
   "widget": "gentle-desktop-rpc",
-  "methods": ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "apply_profile", "list_subagents", "cancel_subagent", "get_worktree_changes", "mcp_status", "get_active_profile"],
+  "methods": ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "apply_profile", "list_subagents", "cancel_subagent", "get_worktree_changes", "mcp_status", "get_active_profile", "tool_vocabulary"],
   "events": ["config_changed", "permission_mode_changed", "rate_limit", "design_canvas", "jobs_update", "profile_applied", "agents_update"]
 }
 ```
 
-The permission methods, the bounded config read and write, the subscription-usage read and refresh, the design-canvas read, the background-jobs list and cancel, the profile apply, the subagents list and cancel, the worktree-changes read, the MCP inventory read, the active-profile read, and the `config_changed`, `permission_mode_changed`, `rate_limit`, `design_canvas`, `jobs_update`, `profile_applied`, and `agents_update` events are advertised because this extension wires them. `set_config` and `config_changed` are advertised only because the config bridge actually implements that writer — advertising is not a forward-looking wish list. The design slice advertises exactly its one read method and its one transition event, not the canvas `open`/`stop` actions, which stay the `gentle_design` tool's job. The jobs slice advertises exactly its list and cancel methods and its one registry-change event, not the `bash_background`/`monitor` start tools, which stay agent tools. The profiles slice advertises exactly its one apply method and its one applied event; profile edits stay `set_config`. The subagents slice advertises exactly its list and cancel methods and its one transition event, not the agent dispatch tools, which stay agent tools. The worktree slice advertises exactly its one read method and no event. The MCP slice advertises exactly its one read method and no event. The active-profile slice advertises exactly its one read method and no event. Method availability is not a claim that every dependency is loaded — see [Permission limits](#permission-limits), [Configuration limits](#configuration-limits), [Usage limits](#usage-limits), [Design limits](#design-limits), [Jobs limits](#jobs-limits), [Profiles limits](#profiles-limits), [Subagents limits](#subagents-limits), [Worktree limits](#worktree-limits), [MCP limits](#mcp-limits), and [Active profile limits](#active-profile-limits).
+The permission methods, the bounded config read and write, the subscription-usage read and refresh, the design-canvas read, the background-jobs list and cancel, the profile apply, the subagents list and cancel, the worktree-changes read, the MCP inventory read, the active-profile read, the tool-vocabulary read, and the `config_changed`, `permission_mode_changed`, `rate_limit`, `design_canvas`, `jobs_update`, `profile_applied`, and `agents_update` events are advertised because this extension wires them. `set_config` and `config_changed` are advertised only because the config bridge actually implements that writer — advertising is not a forward-looking wish list. The design slice advertises exactly its one read method and its one transition event, not the canvas `open`/`stop` actions, which stay the `gentle_design` tool's job. The jobs slice advertises exactly its list and cancel methods and its one registry-change event, not the `bash_background`/`monitor` start tools, which stay agent tools. The profiles slice advertises exactly its one apply method and its one applied event; profile edits stay `set_config`. The subagents slice advertises exactly its list and cancel methods and its one transition event, not the agent dispatch tools, which stay agent tools. The worktree slice advertises exactly its one read method and no event. The MCP slice advertises exactly its one read method and no event. The active-profile slice advertises exactly its one read method and no event. The tool-vocabulary slice advertises exactly its one read method and no event. Method availability is not a claim that every dependency is loaded — see [Permission limits](#permission-limits), [Configuration limits](#configuration-limits), [Usage limits](#usage-limits), [Design limits](#design-limits), [Jobs limits](#jobs-limits), [Profiles limits](#profiles-limits), [Subagents limits](#subagents-limits), [Worktree limits](#worktree-limits), [MCP limits](#mcp-limits), [Active profile limits](#active-profile-limits), and [Tool vocabulary limits](#tool-vocabulary-limits).
 
 ### `get_snapshot`
 
@@ -988,6 +988,39 @@ The method takes no params; any other key is `invalid_request` and nothing is re
 
 `label` is the session-effective spelling the footer renders: `name (session)` for an explicit binding, `name (local)` for a local pin, `name (repo)` for a repository declaration, or the bare global name when the session uses the global default. `active` is the bare global `active` name from `profiles.json`. A session whose effective profile is the global default answers `label` equal to `active`; a bound or pinned session answers a distinguishable `label` — that is the point of the method. A field the owners do not yield is omitted, never fabricated: without a usable global store `active` is absent, a label the resolution does not produce is absent, and when no layer has a profile at all both fields are omitted (the store's own normalizer already drops a stale `active` marker, so that reads as absent too). The first request for a session freezes that session's inherited profile exactly as the footer's first render does — the same owner call, not a second one. The method has no event.
 
+### `tool_vocabulary`
+
+Returns the native action classification as data: tool name or pattern mapped to a category and its native glyph, so a client renders glyphs and headings itself instead of parsing TUI text. It reads the single vocabulary owner (`lib/tool-vocabulary.ts`) — the same tables the quiet-tools, gentle-agents and gentle-ai renderers consume; there is no second classification and no render module behind the payload. The method takes no params besides the optional `tool` name; any other key is `invalid_request` and nothing is read:
+
+```json
+{ "schema": "gentle-shell.desktop-rpc/v1", "requestId": "desktop-67", "method": "tool_vocabulary", "params": {} }
+```
+
+```json
+{
+  "schema": "gentle-shell.desktop-rpc/v1",
+  "kind": "response",
+  "requestId": "desktop-67",
+  "ok": true,
+  "data": {
+    "categories": ["read", "edit", "write", "search", "list", "bash", "delegation", "rdd"],
+    "entries": [
+      { "category": "read", "glyph": "≡", "tools": ["read"] },
+      { "category": "delegation", "glyph": "→", "tools": ["subagent_run"], "heading": "Delegating" },
+      { "category": "rdd", "glyph": "🌹", "patterns": ["gentle_review*"], "heading": "rdd" }
+    ]
+  }
+}
+```
+
+`categories` is the exact native set — `read`, `edit`, `write`, `search`, `list`, `bash`, `delegation`, `rdd` — and there is no `memory` category: no `mem_*` tool is registered in this repository (Engram ships as a separate companion package), so the family is absent until a provider publishes it. Each entry maps exact tool names or prefix patterns (`gentle_review*` matches every review tool) to one category and the glyph the native renderer draws; `heading` is present when the family has a card heading. A tool can carry its own glyph inside a shared category (`grep` and `find` are both `search`). With `tool` set, the answer classifies one name — a tool name outside every category answers `matched: false`, never an invented family:
+
+```json
+{ "schema": "gentle-shell.desktop-rpc/v1", "kind": "response", "requestId": "desktop-68", "ok": true, "data": { "tool": "grep", "matched": true, "category": "search", "glyph": "⌕" } }
+```
+
+The payload is pure data — no rendering function crosses the contract — and the method has no event.
+
 ## Responses
 
 Success:
@@ -1318,6 +1351,13 @@ Follows an `apply_profile` answer whose `status` is `applied`, after the respons
 - **Session state, never identity.** The answer describes the agent-model profile the session launches with; it is not an account identity and carries no user, session path, or working directory.
 - **Truthful absence.** Without a bound session context the method answers `profile_unavailable` rather than an empty label; a label or global name the owners do not yield is omitted, never invented.
 - **Apply still goes through the screen.** A client that wants to change the profile uses `apply_profile` (or `set_config` for the stores); this read never applies, pins, or materializes anything.
+
+## Tool vocabulary limits
+
+- **One classification, no second table.** The projection is `lib/tool-vocabulary.ts`, the same tables the render consumers (`extensions/quiet-tools.ts`, `extensions/gentle-agents.ts`, `lib/gentle-ai-renderer.ts`) import; the three modules consume the moved tables and no copy exists. A category is added the day a provider publishes it, by extending the owner's own table — never by publishing a guess from the client side.
+- **Pure data.** No `pi-tui` import and no render-module import appear in the owner or the bridge; the payload survives a JSON round-trip unchanged. Glyphs and headings are the exact strings the TUI already renders, pinned by render regression tests against the untouched components.
+- **Unpublished families stay absent.** There is no `memory` category: no `mem_*` tool is registered in this repository (Engram ships as a separate companion package), so the tests certify the family's absence instead of inventing it, and a tool name outside every category answers `matched: false`, never a placeholder category.
+- **Read-only and stateless.** The bridge holds no host and no state: the read has no side effect, publishes no event, and depends on no session binding.
 
 ## Verification
 

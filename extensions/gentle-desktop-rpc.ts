@@ -28,6 +28,7 @@ import { DESKTOP_PROFILES_EVENTS, DESKTOP_PROFILES_METHODS, DesktopProfilesBridg
 import { DESKTOP_WORKTREE_METHODS, DesktopWorktreeBridge } from "../lib/desktop-rpc-worktree.ts";
 import { DESKTOP_MCP_METHODS, DesktopMcpBridge } from "../lib/desktop-rpc-mcp.ts";
 import { DESKTOP_PROFILE_METHODS, DesktopProfileBridge } from "../lib/desktop-rpc-profile.ts";
+import { DESKTOP_TOOLS_METHODS, DesktopToolsBridge } from "../lib/desktop-rpc-tools.ts";
 import { readMcpServerNamesDetailed } from "../lib/mcp-config.ts";
 import { shellGitRunner } from "./gentle-shell.ts";
 import { isInteractiveRpcHost } from "../lib/rpc-host.ts";
@@ -56,7 +57,10 @@ export default function desktopRpc(pi: ExtensionAPI) {
 	// name from the profiles store owner; worktree changes delegate to the existing
 	// Gentle Shell changes tracker through the same runner factory every shell
 	// scan uses; MCP inventory reads the single mcp.json reader, extension
-	// registrations and tool names. None has a store of its own.
+	// registrations and tool names; the tool-vocabulary read publishes the native
+// action classification as pure data from the single vocabulary owner
+// (lib/tool-vocabulary.ts) the quiet-tools, gentle-agents and gentle-ai render
+// modules also consume. None has a store of its own.
 	const permissions = new DesktopPermissionBridge(pi);
 	const config = new DesktopConfigBridge();
 	const usage = new DesktopUsageBridge(pi);
@@ -67,13 +71,16 @@ export default function desktopRpc(pi: ExtensionAPI) {
 	const worktree = new DesktopWorktreeBridge(shellGitRunner);
 	const mcp = new DesktopMcpBridge(readMcpServerNamesDetailed, pi);
 	const profile = new DesktopProfileBridge();
+	const tools = new DesktopToolsBridge();
 	const domain: DesktopRpcDomain = (method, params) => {
-		// Config is the only synchronous bridge; permission, usage, design, jobs,
-		// profiles, agents, mcp, profile, and worktree answers are awaited in
-		// fall-through order, so an unknown method still resolves to the router's
-		// `unsupported_method` instead of an early `undefined`.
+		// Config and tools are the only synchronous bridges; permission, usage,
+		// design, jobs, profiles, agents, mcp, profile, and worktree answers are
+		// awaited in fall-through order, so an unknown method still resolves to
+		// the router's `unsupported_method` instead of an early `undefined`.
 		const configOutcome = config.handle(method, params);
 		if (configOutcome !== undefined) return configOutcome;
+		const toolsOutcome = tools.handle(method, params);
+		if (toolsOutcome !== undefined) return toolsOutcome;
 		return (async () => {
 			const permissionOutcome = await permissions.handle(method, params);
 			if (permissionOutcome !== undefined) return permissionOutcome;
@@ -95,7 +102,7 @@ export default function desktopRpc(pi: ExtensionAPI) {
 		})();
 	};
 	const router = new DesktopRpcRouter(
-		["capabilities", "get_snapshot", ...DESKTOP_CONFIG_METHODS, ...DESKTOP_PERMISSION_METHODS, ...DESKTOP_USAGE_METHODS, ...DESKTOP_DESIGN_METHODS, ...DESKTOP_JOBS_METHODS, ...DESKTOP_PROFILES_METHODS, ...DESKTOP_AGENTS_METHODS, ...DESKTOP_WORKTREE_METHODS, ...DESKTOP_MCP_METHODS, ...DESKTOP_PROFILE_METHODS],
+		["capabilities", "get_snapshot", ...DESKTOP_CONFIG_METHODS, ...DESKTOP_PERMISSION_METHODS, ...DESKTOP_USAGE_METHODS, ...DESKTOP_DESIGN_METHODS, ...DESKTOP_JOBS_METHODS, ...DESKTOP_PROFILES_METHODS, ...DESKTOP_AGENTS_METHODS, ...DESKTOP_WORKTREE_METHODS, ...DESKTOP_MCP_METHODS, ...DESKTOP_PROFILE_METHODS, ...DESKTOP_TOOLS_METHODS],
 		// Method order is the documented contract; keep the capabilities arrays in
 		// `docs/desktop-rpc.md` and `tests/maintainer/desktop-rpc.maintest.ts` identical.
 		[...DESKTOP_CONFIG_EVENTS, DESKTOP_PERMISSION_EVENT, ...DESKTOP_USAGE_EVENTS, ...DESKTOP_DESIGN_EVENTS, ...DESKTOP_JOBS_EVENTS, ...DESKTOP_PROFILES_EVENTS, ...DESKTOP_AGENTS_EVENTS],

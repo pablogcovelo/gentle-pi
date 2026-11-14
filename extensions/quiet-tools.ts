@@ -12,6 +12,7 @@ import { Text, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { isAbsolute } from "node:path";
 import { resolveGentleAiDevBinaryOverride, type GentleAiDevBinaryOverride } from "../lib/gentle-ai-binary.ts";
+import { TOOL_GLYPH, type ToolVocabularyToolName } from "../lib/tool-vocabulary.ts";
 import { CARD_CONTENT, cardContent } from "../lib/card-content-policy.ts";
 import { GentleAiElapsedTimingLedger } from "../lib/gentle-ai-elapsed-store.ts";
 import { quietToolsEnabled } from "../lib/quiet-tools-config.ts";
@@ -24,7 +25,9 @@ import {
 } from "../lib/shell-card.ts";
 import { sanitizeTerminalText, stripAnsi } from "../lib/terminal-theme.ts";
 
-type QuietToolName = "read" | "bash" | "grep" | "find" | "ls" | "edit" | "write";
+// The quiet tool names and their glyphs are owned by the shared vocabulary
+// projection (lib/tool-vocabulary.ts), which also publishes them as data.
+type QuietToolName = ToolVocabularyToolName;
 type RegisteredToolName = Exclude<QuietToolName, "bash">;
 type ThemeLike = {
 	bold(value: string): string;
@@ -39,17 +42,6 @@ const TOOL_CREATORS = {
 	edit: createEditTool,
 	write: createWriteTool,
 } satisfies Record<RegisteredToolName, (cwd: string) => any>;
-
-// Caller-owned identities: shared notices and lower widgets retain their glyphs.
-const TOOL_GLYPH = {
-	read: "≡",
-	bash: "$",
-	grep: "⌕",
-	find: "⌖",
-	ls: "☷",
-	edit: "✎",
-	write: "+",
-} as const satisfies Record<QuietToolName, string>;
 
 const COLLAPSED_COUNT_LABELS: Partial<Record<QuietToolName, string>> = {
 	grep: "matches",

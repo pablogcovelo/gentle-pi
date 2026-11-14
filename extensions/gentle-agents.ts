@@ -28,6 +28,9 @@ import { DESKTOP_JOBS_SERVICE_CHANNEL, DESKTOP_JOBS_SERVICE_SCHEMA, projectDeskt
 import { DESKTOP_AGENTS_SERVICE_CHANNEL, DESKTOP_AGENTS_SERVICE_SCHEMA, accumulateTaskUsage, projectDesktopAgent, selectDesktopAgents, type DesktopAgentsCancelOutcome, type DesktopAgentsOwnerRead, type DesktopAgentsService } from "../lib/desktop-rpc-agents.ts";
 import { JobsView } from "../lib/jobs-view.ts";
 import { JOBS_FINISHED_TTL_MS } from "../lib/jobs-widget.ts";
+// The per-action glyph and heading tables are owned by the shared vocabulary
+// projection (lib/tool-vocabulary.ts), which also publishes them as data.
+import { DELEGATION_ACTION_GLYPH as ACTION_GLYPH, DELEGATION_ACTION_HEADING as ACTION_HEADING } from "../lib/tool-vocabulary.ts";
 import { JOBS_SIDEBAR_EVENT, JOBS_STATUS_KEY } from "../lib/jobs-sidebar-state.ts";
 import { Text, truncateToWidth, type Component, type TUI } from "@earendil-works/pi-tui";
 import { invalidateSidebar } from "../lib/shell-sidebar-layout.ts";
@@ -530,29 +533,6 @@ const STATUS_CARD_TONE: Record<string, CardTone> = {
 // The per-action identity from the design handoff (agent-tool-cards/04):
 // each agent tool carries its own glyph and reads as a verb, so the transcript
 // feels like working with agents rather than calling functions.
-const ACTION_GLYPH: Record<string, string> = {
-	run: "→",
-	status: "◎",
-	result: "↩",
-	cancel: "⨯",
-	send_message: "✉",
-	reply: "✉",
-	continue: "↻",
-	list_tasks: "☰",
-	list_agents: "☰",
-};
-const ACTION_HEADING: Record<string, string> = {
-	run: "Delegating",
-	status: "Agent status",
-	result: "Agent answer",
-	cancel: "Stopping agent",
-	send_message: "Messaging agent",
-	reply: "Replying to agent",
-	continue: "Resuming agent",
-	list_tasks: "Agent tasks",
-	list_agents: "Agent roster",
-};
-
 // The state word as a scanable pill: uppercase, colored by the state's role.
 function statusPill(status: string, theme: CardTheme): string {
 	const role = status === TASK_STATUS.COMPLETED ? "success"
@@ -1056,9 +1036,10 @@ export default function gentleAgents(pi: ExtensionAPI, env: NodeJS.ProcessEnv = 
 				if (closePromise) return closePromise;
 				closePromise = Promise.resolve().then(async () => {
 					await Promise.allSettled([
-						(async () => { try { client?.close(); } catch {} })(),
-						(async () => { try { await listener?.close(); } catch {} })(),
-						(async () => { try { if (registry && (!listener || !listener.closesRegistry)) await registry.close?.(); } catch {} })(),
+						// Best-effort shutdown: a half-started transport must not mask the failure that closed it.
+						(async () => { try { client?.close(); } catch { /* best-effort */ } })(),
+						(async () => { try { await listener?.close(); } catch { /* best-effort */ } })(),
+						(async () => { try { if (registry && (!listener || !listener.closesRegistry)) await registry.close?.(); } catch { /* best-effort */ } })(),
 					]);
 				});
 				return closePromise;
@@ -1108,7 +1089,8 @@ export default function gentleAgents(pi: ExtensionAPI, env: NodeJS.ProcessEnv = 
 					const diagnostic = startupPhase === "registry" && observation.availability === "observed" && observation.firstFailurePhase !== null
 						? `phase=${observation.firstFailurePhase} class=${observation.firstFailureClass} code=${observation.firstFailureCode} lastStartupMarker=${observation.lastStartupMarker ?? "unavailable"}`
 						: `phase=${startupPhase} diagnostics=unavailable`;
-					try { ctx.ui.notify(`Session transport startup failed: ${diagnostic}${bootstrap ? ` bootstrap=${bootstrap}` : ""}.`, "warning"); } catch {}
+					// The notification is best-effort: reporting the failure must not fail the session start.
+				try { ctx.ui.notify(`Session transport startup failed: ${diagnostic}${bootstrap ? ` bootstrap=${bootstrap}` : ""}.`, "warning"); } catch { /* best-effort */ }
 				}
 				await closeStartupTransport();
 				// Armed only after cleanup, so the re-arm never overlaps the failed helper.
@@ -3435,7 +3417,8 @@ export default function gentleAgents(pi: ExtensionAPI, env: NodeJS.ProcessEnv = 
 		} catch {
 			presence = undefined;
 			// Fixed text only: the failure may carry a profile path or session id.
-			try { ctx.ui.notify("Session presence unavailable: phase=presence class=transport code=presence-cleared.", "warning"); } catch {}
+			// The notification is best-effort: reporting the cleared presence must not fail the session.
+			try { ctx.ui.notify("Session presence unavailable: phase=presence class=transport code=presence-cleared.", "warning"); } catch { /* best-effort */ }
 		}
 		// /reload and /resume recompute busy from live owned work only: a task
 		// restored from disk never enters ownedTaskIds, so counting it would

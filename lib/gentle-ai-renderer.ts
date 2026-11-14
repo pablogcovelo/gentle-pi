@@ -1,6 +1,14 @@
 import { keyHint, type AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { type GentleAiTimingLookup } from "./gentle-ai-elapsed-store.ts";
+// The rdd card identity is owned by the shared vocabulary projection
+// (lib/tool-vocabulary.ts), which also publishes it as data.
+import {
+	GENTLE_AI_BINARY_TITLE as BINARY_TITLE,
+	RDD_CARD_GLYPH as CARD_GLYPH,
+	RDD_REVIEW_PREFIX as REVIEW_PREFIX,
+	RDD_REVIEW_TITLE as REVIEW_TITLE,
+} from "./tool-vocabulary.ts";
 import { CARD_TONE, cardBodyRows, cardBottom, cardInnerWidth, cardLine, cardTop, floatRows, type Card, type CardTheme, type CardTone } from "./shell-card.ts";
 import { formatElapsed } from "./agents-widget.ts";
 import { sanitizeTerminalText, stripAnsi } from "./terminal-theme.ts";
@@ -65,13 +73,7 @@ const STATUS_TONE: Record<LifecycleStatus, CardTone> = {
 // The title reads like the quiet read card: a short name, then the operation
 // as its argument. Review operations are `rdd <op>`; any other binary call
 // is `gentle-ai <op>`.
-const REVIEW_PREFIX = "review";
-const REVIEW_TITLE = "rdd";
-const BINARY_TITLE = "gentle-ai";
 const SEPARATOR = " · ";
-// The binary keeps its rose as a colored emoji (2 cells, no text-presentation
-// selector); Gentle Shell notices keep the flower.
-const CARD_GLYPH = "\u{1F339}";
 const DETAIL_ROLE = "dim";
 const passthroughTheme: CardTheme = { fg: (_color, text) => text };
 
