@@ -15,6 +15,13 @@ export const INVALID_TOOLS_PARAMS = { code: "invalid_request", message: "Invalid
 
 const MAX_TOOL_NAME_LENGTH = 256;
 
+/**
+ * Upper bound on the entries one full answer carries. The vocabulary is a
+ * closed table today, so the cap only bites if the owner ever publishes a much
+ * larger one; `truncated: true` beside `entries` says it did.
+ */
+export const DESKTOP_TOOLS_ENTRIES_LIMIT = 128;
+
 /** `tool_vocabulary` takes no params besides the optional `tool` name; anything else is a typed `invalid_request` before anything is read. */
 export function invalidToolsParams(params: Record<string, unknown>): boolean {
 	for (const key of Object.keys(params)) {
@@ -35,7 +42,7 @@ function publishedEntry(entry: ToolVocabularyEntry): Record<string, unknown> {
 }
 
 /** One `tool_vocabulary` request. Without `tool` the whole vocabulary is published; with it, one classification — an unknown name answers `matched: false`, never an invented family. */
-export function toolVocabularyOutcome(params: Record<string, unknown>): DesktopRpcOutcome {
+export function toolVocabularyOutcome(params: Record<string, unknown>, vocabulary: readonly ToolVocabularyEntry[] = TOOL_VOCABULARY): DesktopRpcOutcome {
 	if (invalidToolsParams(params)) return { ok: false, error: INVALID_TOOLS_PARAMS };
 	const tool = params.tool;
 	if (typeof tool === "string") {
@@ -47,7 +54,14 @@ export function toolVocabularyOutcome(params: Record<string, unknown>): DesktopR
 				: { tool, matched: false },
 		};
 	}
-	return { ok: true, data: { categories: [...TOOL_VOCABULARY_CATEGORIES], entries: TOOL_VOCABULARY.map(publishedEntry) } };
+	return {
+		ok: true,
+		data: {
+			categories: [...TOOL_VOCABULARY_CATEGORIES],
+			entries: vocabulary.slice(0, DESKTOP_TOOLS_ENTRIES_LIMIT).map(publishedEntry),
+			truncated: vocabulary.length > DESKTOP_TOOLS_ENTRIES_LIMIT,
+		},
+	};
 }
 
 /** The Desktop domain slice for `tool_vocabulary`: a pure data read with no host to attach and no state to reset. */

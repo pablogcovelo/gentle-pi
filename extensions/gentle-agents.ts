@@ -1231,10 +1231,11 @@ export default function gentleAgents(pi: ExtensionAPI, env: NodeJS.ProcessEnv = 
 			let disposed = false;
 			const subscriptions = new Set<(sessionId: string) => void>();
 			const sessionId = ctx.sessionManager?.getSessionId?.() ?? "";
-			const read = (): DesktopJobsOwnerRead => ({
-				sessionId,
-				jobs: disposed ? [] : selectDesktopJobs(jobs.list(sessionId), deps.now()),
-			});
+			const read = (): DesktopJobsOwnerRead => {
+				if (disposed) return { sessionId, jobs: [], truncated: false };
+				const { jobs: projected, truncated } = selectDesktopJobs(jobs.list(sessionId), deps.now());
+				return { sessionId, jobs: projected, truncated };
+			};
 			const cancel = (id: string): DesktopJobsCancelOutcome => {
 				if (disposed) return { kind: "not_found" };
 				const job = jobs.get(id);
@@ -1292,10 +1293,11 @@ export default function gentleAgents(pi: ExtensionAPI, env: NodeJS.ProcessEnv = 
 			let disposed = false;
 			const subscriptions = new Set<(sessionId: string) => void>();
 			const sessionId = ctx.sessionManager?.getSessionId?.() ?? "";
-			const read = (): DesktopAgentsOwnerRead => ({
-				sessionId,
-				agents: disposed ? [] : selectDesktopAgents(store.list(sessionId)),
-			});
+			const read = (): DesktopAgentsOwnerRead => {
+				if (disposed) return { sessionId, agents: [], truncated: false };
+				const { agents: projected, truncated } = selectDesktopAgents(store.list(sessionId));
+				return { sessionId, agents: projected, truncated };
+			};
 			const cancel = (id: string): DesktopAgentsCancelOutcome => {
 				if (disposed) return { kind: "not_found" };
 				const before = store.get(id);

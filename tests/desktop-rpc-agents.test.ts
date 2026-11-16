@@ -120,7 +120,11 @@ function makeAgentsOwnerService(store: TaskStore, runner: FakeRunner, sessionId 
 	let disposed = false;
 	const service: DesktopAgentsService = {
 		schema: DESKTOP_AGENTS_SERVICE_SCHEMA,
-		read: (): DesktopAgentsOwnerRead => ({ sessionId, agents: disposed ? [] : selectDesktopAgents(store.list(sessionId)) }),
+		read: (): DesktopAgentsOwnerRead => {
+			if (disposed) return { sessionId, agents: [], truncated: false };
+			const { agents, truncated } = selectDesktopAgents(store.list(sessionId));
+			return { sessionId, agents, truncated };
+		},
 		cancel: (id: string): DesktopAgentsCancelOutcome => {
 			if (disposed) return { kind: "not_found" };
 			const before = store.get(id);
@@ -264,10 +268,13 @@ test("selectDesktopAgents keeps active first then recent finished, bounded", () 
 		make("finished-old", TASK_STATUS.FAILED, 100, 100),
 	];
 	const selected = selectDesktopAgents(records);
-	assert.deepEqual(selected.map((entry) => entry.id), ["running-1", "waiting-1", "queued-1", "finished-new", "finished-old"]);
+	assert.deepEqual(selected.agents.map((entry) => entry.id), ["running-1", "waiting-1", "queued-1", "finished-new", "finished-old"]);
+	assert.equal(selected.truncated, false, "a list shorter than the bound is complete");
 
 	const many = Array.from({ length: DESKTOP_AGENTS_LIST_LIMIT + 20 }, (_, i) => make(`t-${i}`, TASK_STATUS.COMPLETED, i + 1, i + 1));
-	assert.equal(selectDesktopAgents(many).length, DESKTOP_AGENTS_LIST_LIMIT, "the list is bounded");
+	const bounded = selectDesktopAgents(many);
+	assert.equal(bounded.agents.length, DESKTOP_AGENTS_LIST_LIMIT, "the list is bounded");
+	assert.equal(bounded.truncated, true, "the bound is published, never a silent clip");
 });
 
 // ---- Pure contract: params and shape ----
@@ -282,7 +289,7 @@ test("params parsers accept only the documented shapes", () => {
 });
 
 test("isDesktopAgentsServiceShape accepts only the versioned adapter", () => {
-	const good = { schema: DESKTOP_AGENTS_SERVICE_SCHEMA, read: () => ({ sessionId: "s", agents: [] }), cancel: () => ({ kind: "not_found" }), observe: () => () => {}, dispose: () => {} };
+	const good = { schema: DESKTOP_AGENTS_SERVICE_SCHEMA, read: () => ({ sessionId: "s", agents: [], truncated: false }), cancel: () => ({ kind: "not_found" }), observe: () => () => {}, dispose: () => {} };
 	assert.equal(isDesktopAgentsServiceShape(good), true);
 	assert.equal(isDesktopAgentsServiceShape({ ...good, schema: "gentle-pi.desktop-agents-service/v0" }), false);
 	assert.equal(isDesktopAgentsServiceShape({ ...good, cancel: undefined }), false);
@@ -322,6 +329,7 @@ test("list_subagents answers the projected active-session list and emits nothing
 	assert.equal(outcome.ok, true);
 	assert.deepEqual((outcome as { ok: true; data: Record<string, unknown> }).data, {
 		agents: [projectDesktopAgent(task("t1", "session-a"))],
+		truncated: false,
 	});
 	assert.equal(events.length, 0, "a read emits nothing");
 });
@@ -385,7 +393,7 @@ test("a throwing or malformed owner never leaks raw prompt text or paths", async
 	// A foreign prompt field on an owner entry is dropped, never echoed.
 	const malformed: DesktopAgentsService = {
 		schema: DESKTOP_AGENTS_SERVICE_SCHEMA,
-		read: () => ({ sessionId: "session-a", agents: [{ id: "t", agent: "a", status: "running", model: "m", lastStep: "running", usage: { total: 0, cost: 0 }, prompt: "rm -rf /" }] as unknown as DesktopAgentEntry[] }),
+		read: () => ({ sessionId: "session-a", agents: [{ id: "t", agent: "a", status: "running", model: "m", lastStep: "running", usage: { total: 0, cost: 0 }, prompt: "rm -rf /" }] as unknown as DesktopAgentEntry[], truncated: false }),
 		cancel: () => ({ kind: "not_found" }),
 		observe: () => () => {},
 		dispose: () => {},
@@ -393,7 +401,7 @@ test("a throwing or malformed owner never leaks raw prompt text or paths", async
 	const badBridge = makeBridge(malformed);
 	const bad = await badBridge.bridge.handle("list_subagents", {});
 	assert.equal(bad.ok, true);
-	assert.deepEqual((bad as { ok: true; data: Record<string, unknown> }).data, { agents: [{ id: "t", agent: "a", status: "running", model: "m", lastStep: "running", usage: { total: 0, cost: 0 } }] });
+	assert.deepEqual((bad as { ok: true; data: Record<string, unknown> }).data, { agents: [{ id: "t", agent: "a", status: "running", model: "m", lastStep: "running", usage: { total: 0, cost: 0 } }], truncated: false });
 	assert.equal(JSON.stringify(bad).includes("rm -rf"), false);
 });
 
@@ -485,7 +493,7 @@ test("agent-driven transitions become one coalesced agents_update filtered by ac
 	scheduler.flushAll();
 	assert.equal(events.length, 1);
 	assert.equal(events[0]!.event, DESKTOP_AGENTS_EVENT);
-	assert.deepEqual(events[0]!.data, { agents: [projectDesktopAgent(task("t1", "session-a"))] });
+	assert.deepEqual(events[0]!.data, { agents: [projectDesktopAgent(task("t1", "session-a"))], truncated: false });
 
 	// A foreign-session change does not reach this bridge.
 	store.add(task("t2", "session-b"));
@@ -514,7 +522,7 @@ test("session reset disconnects observers and drops stale async outcomes", async
 	const observers = new Set<(sessionId: string) => void>();
 	const service: DesktopAgentsService = {
 		schema: DESKTOP_AGENTS_SERVICE_SCHEMA,
-		read: () => ({ sessionId: "session-a", agents: [] }),
+		read: () => ({ sessionId: "session-a", agents: [], truncated: false }),
 		cancel: () => ({ kind: "not_found" }),
 		observe: (onChange) => { observers.add(onChange); return () => observers.delete(onChange); },
 		dispose: () => { observers.clear(); },
@@ -542,7 +550,7 @@ test("a late discovery after reset is disposed and never cached for the next ses
 	const disposed: string[] = [];
 	const service: DesktopAgentsService = {
 		schema: DESKTOP_AGENTS_SERVICE_SCHEMA,
-		read: () => ({ sessionId: "session-a", agents: [] }),
+		read: () => ({ sessionId: "session-a", agents: [], truncated: false }),
 		cancel: () => ({ kind: "not_found" }),
 		observe: () => () => {},
 		dispose: () => { disposed.push("old"); },
@@ -577,7 +585,7 @@ test("discoverDesktopAgentsService accepts the versioned adapter and ignores mal
 	listeners.set(DESKTOP_AGENTS_SERVICE_CHANNEL, (payload) => {
 		(payload as { respond(service: unknown): void }).respond({
 			schema: DESKTOP_AGENTS_SERVICE_SCHEMA,
-			read: () => ({ sessionId: "s", agents: [] }),
+			read: () => ({ sessionId: "s", agents: [], truncated: false }),
 			cancel: () => ({ kind: "not_found" }),
 			observe: () => () => {},
 			dispose: () => {},
@@ -587,7 +595,7 @@ test("discoverDesktopAgentsService accepts the versioned adapter and ignores mal
 	assert.equal(service?.schema, DESKTOP_AGENTS_SERVICE_SCHEMA);
 
 	listeners.set(DESKTOP_AGENTS_SERVICE_CHANNEL, (payload) => {
-		(payload as { respond(service: unknown): void }).respond({ schema: "gentle-pi.desktop-agents-service/v0", read: () => ({ sessionId: "s", agents: [] }) });
+		(payload as { respond(service: unknown): void }).respond({ schema: "gentle-pi.desktop-agents-service/v0", read: () => ({ sessionId: "s", agents: [], truncated: false }) });
 	});
 	assert.equal(await discoverDesktopAgentsService(pi, ctx), undefined);
 });
@@ -809,7 +817,7 @@ async function launchBackgroundTask(h: RealOwnerHarness): Promise<string> {
 
 test("the real owner serves a truthful empty subagent list and a typed not_found cancel", async (t) => {
 	const { service } = await realOwnerHarness(t);
-	assert.deepEqual(service.read(), { sessionId: "session-a", agents: [] }, "no subagents exist, so the list is empty rather than fabricated");
+	assert.deepEqual(service.read(), { sessionId: "session-a", agents: [], truncated: false }, "no subagents exist, so the list is empty rather than fabricated");
 	assert.deepEqual(service.cancel("unknown-id"), { kind: "not_found" }, "an unknown id is a typed not_found, never a spawn");
 	assert.deepEqual(service.cancel(""), { kind: "not_found" });
 });

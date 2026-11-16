@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
+	DESKTOP_WORKTREE_FILES_LIMIT,
 	DESKTOP_WORKTREE_METHOD,
 	DESKTOP_WORKTREE_METHODS,
 	DesktopWorktreeBridge,
@@ -86,8 +87,22 @@ test("a scanned root answers its branch and the owner's ChangesModel", async () 
 			root: ROOT,
 			branch: "main",
 			model: { files, added: 12, deleted: 3, digest: changesDigest({ files, added: 0, deleted: 0 }) },
+			truncated: false,
 		},
 	});
+});
+
+test("more files than the bound are clipped and labeled, and the totals keep describing the whole scan", async () => {
+	const count = DESKTOP_WORKTREE_FILES_LIMIT + 5;
+	const status = Array.from({ length: count }, (_, i) => ` M src/f${i}.ts\0`).join("");
+	const numstat = Array.from({ length: count }, (_, i) => `1\t0\tsrc/f${i}.ts\n`).join("");
+	const { outcome } = run({ ...happyHandlers(), [STATUS]: { code: 0, stdout: status }, [DIFF]: { code: 0, stdout: numstat } });
+	const answer = await outcome;
+	assert.ok(answer.ok);
+	const data = answer.data as { model: { files: ChangedFile[]; added: number; deleted: number }; truncated: boolean };
+	assert.equal(data.model.files.length, DESKTOP_WORKTREE_FILES_LIMIT, "the list is bounded");
+	assert.equal(data.model.added, count, "totals keep describing every scanned file");
+	assert.equal(data.truncated, true, "the clip is published, never silent");
 });
 
 test("a measured untracked file counts its lines and carries no label", async () => {
@@ -98,7 +113,7 @@ test("a measured untracked file counts its lines and carries no label", async ()
 	const { runner } = fakeGit(happyHandlers());
 	assert.deepEqual(
 		await worktreeChangesOutcome({ root: ROOT }, { discover: runner, gitForRoot: () => runner, linesForRoot: () => async () => 7 }, owner()),
-		{ ok: true, data: { root: ROOT, branch: "main", model: { files, added: 19, deleted: 3, digest: changesDigest({ files, added: 0, deleted: 0 }) } } },
+		{ ok: true, data: { root: ROOT, branch: "main", model: { files, added: 19, deleted: 3, digest: changesDigest({ files, added: 0, deleted: 0 }) }, truncated: false } },
 	);
 });
 
@@ -115,7 +130,7 @@ test("an unborn root is labeled and never scanned for changes", async () => {
 
 test("a clean root answers the empty model with no branch claim", async () => {
 	const { outcome } = run({ ...happyHandlers(), [STATUS]: { code: 0, stdout: "" } });
-	assert.deepEqual(await outcome, { ok: true, data: { root: ROOT, model: emptyChanges() } });
+	assert.deepEqual(await outcome, { ok: true, data: { root: ROOT, model: emptyChanges(), truncated: false } });
 });
 
 test("a foreign root whose own HEAD cannot be read is labeled unknown, not dropped", async () => {
@@ -132,6 +147,7 @@ test("a foreign root whose own HEAD cannot be read is labeled unknown, not dropp
 			root: ROOT,
 			branch: "unknown",
 			model: { files: [{ path: "a.txt", added: 1, deleted: 0, status: CHANGE_STATUS.MODIFIED }], added: 1, deleted: 0, digest: changesDigest({ files: [{ path: "a.txt", added: 1, deleted: 0, status: CHANGE_STATUS.MODIFIED }], added: 0, deleted: 0 }) },
+			truncated: false,
 		},
 	});
 	// The fifth vector is the read-only branch probe for that foreign root, so the
@@ -166,7 +182,7 @@ test("the bridge gates on the session's own roots and answers truthfully without
 	} as unknown as ExtensionContext;
 	bridge.attach(context);
 	assert.deepEqual(await bridge.handle(DESKTOP_WORKTREE_METHOD, { root: "/nope" }), { ok: false, error: WORKTREE_ROOT_UNKNOWN });
-	assert.deepEqual(await bridge.handle(DESKTOP_WORKTREE_METHOD, { root: "/repo2" }), { ok: true, data: { root: "/repo2", model: emptyChanges() } });
+	assert.deepEqual(await bridge.handle(DESKTOP_WORKTREE_METHOD, { root: "/repo2" }), { ok: true, data: { root: "/repo2", model: emptyChanges(), truncated: false } });
 	bridge.reset();
 	assert.deepEqual(await bridge.handle(DESKTOP_WORKTREE_METHOD, { root: ROOT }), { ok: false, error: WORKTREE_UNAVAILABLE });
 });

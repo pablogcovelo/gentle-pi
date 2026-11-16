@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+	DESKTOP_TOOLS_ENTRIES_LIMIT,
 	DESKTOP_TOOLS_METHOD,
 	DESKTOP_TOOLS_METHODS,
 	INVALID_TOOLS_PARAMS,
@@ -32,6 +33,7 @@ test("tool_vocabulary takes no params besides the optional tool name", () => {
 interface VocabularyData {
 	categories: string[];
 	entries: Array<{ category: string; glyph: string; tools?: string[]; patterns?: string[]; heading?: string }>;
+	truncated: boolean;
 }
 
 test("the full read publishes every category and its native glyphs as pure data", () => {
@@ -47,8 +49,19 @@ test("the full read publishes every category and its native glyphs as pure data"
 	}
 	const covered = new Set(data.entries.map((entry) => entry.category));
 	for (const category of data.categories) assert.ok(covered.has(category), `${category} is published`);
+	assert.equal(data.truncated, false, "the closed table fits inside the bound");
 	// Pure data: the payload survives a JSON round-trip unchanged.
 	assert.deepEqual(JSON.parse(JSON.stringify(data)), data);
+});
+
+test("a vocabulary larger than the bound is clipped and labeled", () => {
+	const many = Array.from({ length: DESKTOP_TOOLS_ENTRIES_LIMIT + 5 }, (_, i) => ({ category: "read" as const, glyph: "≡", tools: [`tool-${i}`] }));
+	const outcome = toolVocabularyOutcome({}, many);
+	assert.ok(outcome.ok);
+	const data = outcome.data as unknown as VocabularyData;
+	assert.equal(data.entries.length, DESKTOP_TOOLS_ENTRIES_LIMIT, "the list is bounded");
+	assert.equal(data.truncated, true, "the clip is published, never silent");
+	assert.deepEqual(data.categories, ["read", "edit", "write", "search", "list", "bash", "delegation", "rdd"], "the category set is unchanged");
 });
 
 test("a single tool classifies by exact name and by the review pattern", () => {

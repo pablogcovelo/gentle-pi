@@ -28,6 +28,8 @@ const DISCOVERY_TIMEOUT_MS = 100;
 /** The `jobs_update` event payload: the active session's projected job list. */
 export interface DesktopJobsUpdateEvent {
 	jobs: DesktopJobEntry[];
+	/** Whether the owner's bound dropped entries from `jobs`. */
+	truncated: boolean;
 }
 
 interface HostUiJobsRequest { context: ExtensionContext; respond(service: DesktopJobsService): void }
@@ -189,7 +191,7 @@ export class DesktopJobsBridge {
 		const key = JSON.stringify(read.jobs);
 		if (key === this.lastEmittedJobs) return;
 		this.lastEmittedJobs = key;
-		emit(DESKTOP_JOBS_EVENT, { jobs: read.jobs } satisfies DesktopJobsUpdateEvent);
+		emit(DESKTOP_JOBS_EVENT, { jobs: read.jobs, truncated: read.truncated } satisfies DesktopJobsUpdateEvent);
 	}
 
 	private activeSessionId(host: ExtensionContext): string {
@@ -202,7 +204,7 @@ export class DesktopJobsBridge {
 			if (!read || typeof read !== "object") return undefined;
 			const jobs = this.parseJobs(read.jobs);
 			if (jobs === undefined) return undefined;
-			return { sessionId: read.sessionId, jobs };
+			return { sessionId: read.sessionId, jobs, truncated: read.truncated === true };
 		} catch {
 			// Raw owner failures carry paths and command detail; none of it crosses
 			// the contract. An unreadable owner is treated as absent.
@@ -224,7 +226,7 @@ export class DesktopJobsBridge {
 	private list(service: DesktopJobsService): DesktopRpcOutcome {
 		const read = this.readOwner(service);
 		if (!read) return { ok: false, error: JOBS_UNAVAILABLE };
-		return { ok: true, data: { jobs: read.jobs } as unknown as Record<string, unknown> };
+		return { ok: true, data: { jobs: read.jobs, truncated: read.truncated } };
 	}
 
 	private cancel(service: DesktopJobsService, params: Record<string, unknown>): DesktopRpcOutcome {
@@ -242,7 +244,7 @@ export class DesktopJobsBridge {
 		// The owner's projected job crosses the event bus: re-validate it.
 		const job = parseDesktopJobEntry(outcome.job);
 		if (job === undefined) return { ok: false, error: JOBS_UNAVAILABLE };
-		const data = { job } as unknown as Record<string, unknown>;
+		const data = { job };
 		// A no-op (already-terminal) cancellation changes nothing: answer the
 		// terminal state and emit no event.
 		if (outcome.changed !== true) return { ok: true, data };
@@ -256,7 +258,7 @@ export class DesktopJobsBridge {
 			data,
 			event: {
 				name: DESKTOP_JOBS_EVENT,
-				data: { jobs } satisfies DesktopJobsUpdateEvent,
+				data: { jobs, truncated: read?.truncated === true } satisfies DesktopJobsUpdateEvent,
 			},
 		};
 	}

@@ -400,7 +400,7 @@ test("installed Pi serves the owner-loaded empty job list without starting a job
 
 		const list = byRequest("jobs-1");
 		assert.equal(list.ok, true, JSON.stringify(list));
-		assert.deepEqual(list.data, { jobs: [] }, "no jobs exist, so the list is empty rather than fabricated");
+		assert.deepEqual(list.data, { jobs: [], truncated: false }, "no jobs exist, so the list is empty rather than fabricated");
 
 		assert.equal(payloads.some((payload) => payload.kind === "event"), false, "an offline list emits nothing");
 		assert.equal(JSON.stringify(payloads).includes("command"), false, "no command text leaks into the wire");
@@ -442,7 +442,7 @@ test("installed Pi serves the owner-loaded empty subagent list without starting 
 
 		const list = byRequest("agents-1");
 		assert.equal(list.ok, true, JSON.stringify(list));
-		assert.deepEqual(list.data, { agents: [] }, "no subagents exist, so the list is empty rather than fabricated");
+		assert.deepEqual(list.data, { agents: [], truncated: false }, "no subagents exist, so the list is empty rather than fabricated");
 
 		assert.equal(payloads.some((payload) => payload.kind === "event"), false, "an offline list emits nothing");
 		assert.equal(JSON.stringify(payloads).includes("prompt"), false, "no prompt text leaks into the wire");

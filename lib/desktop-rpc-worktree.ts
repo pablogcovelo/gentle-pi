@@ -30,6 +30,17 @@ import {
 export const DESKTOP_WORKTREE_METHODS = ["get_worktree_changes"] as const;
 export const DESKTOP_WORKTREE_METHOD = DESKTOP_WORKTREE_METHODS[0];
 
+/**
+ * Upper bound on the files one answer carries. A root with more changed files
+ * than this answers the first `DESKTOP_WORKTREE_FILES_LIMIT` paths beside
+ * `truncated: true`; `model.added`, `model.deleted` and `model.digest` keep
+ * describing every file the tracker scanned, so a clipped list never
+ * understates the totals.
+ */
+export const DESKTOP_WORKTREE_FILES_LIMIT = 200;
+/** Freeform bound on the branch label; a longer one is clipped, never refused. */
+const BRANCH_FIELD_LIMIT = 200;
+
 export const INVALID_WORKTREE_PARAMS = { code: "invalid_request", message: "Invalid get_worktree_changes parameters" } as const;
 export const WORKTREE_ROOT_UNKNOWN = { code: "unknown_root", message: "Not a worktree root of this session" } as const;
 export const WORKTREE_UNAVAILABLE = { code: "worktree_unavailable", message: "Worktree state unavailable for this session" } as const;
@@ -98,8 +109,28 @@ export async function worktreeChangesOutcome(params: Record<string, unknown>, ru
 	if (tracker.unbornRoots.includes(root)) return { ok: true, data: { root, unborn: true } };
 	if (tracker.failedRoots.includes(root)) return { ok: true, data: { root, failed: true } };
 	const tree = tracker.worktrees.find((entry) => entry.root === root);
-	if (!tree) return { ok: true, data: { root, model: emptyChanges() } };
-	return { ok: true, data: { root, ...(tree.branch ? { branch: tree.branch } : {}), model: labelUnmeasuredCounts(tree.model, runners.linesForRoot !== undefined) } };
+	if (!tree) return { ok: true, data: { root, model: boundFiles(emptyChanges()).model, truncated: false } };
+	const bounded = boundFiles(labelUnmeasuredCounts(tree.model, runners.linesForRoot !== undefined));
+	return {
+		ok: true,
+		data: {
+			root,
+			...(tree.branch ? { branch: tree.branch.length <= BRANCH_FIELD_LIMIT ? tree.branch : `${tree.branch.slice(0, BRANCH_FIELD_LIMIT - 1)}…` } : {}),
+			model: bounded.model,
+			truncated: bounded.truncated,
+		},
+	};
+}
+
+/**
+ * The bounded file window. The tracked totals and the digest are the tracker's
+ * own facts about the whole scan, so only the published list is clipped — a
+ * `truncated: true` beside it is the client's signal that the panel is
+ * incomplete rather than the root having exactly this many files.
+ */
+function boundFiles(model: ChangesModel): { model: ChangesModel; truncated: boolean } {
+	if (model.files.length <= DESKTOP_WORKTREE_FILES_LIMIT) return { model, truncated: false };
+	return { model: { ...model, files: model.files.slice(0, DESKTOP_WORKTREE_FILES_LIMIT) }, truncated: true };
 }
 
 /**

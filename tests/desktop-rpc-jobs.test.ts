@@ -105,7 +105,11 @@ function makeOwnerService(fixture: RegistryFixture, sessionId = "session-a") {
 	let disposed = false;
 	const service: DesktopJobsService = {
 		schema: DESKTOP_JOBS_SERVICE_SCHEMA,
-		read: (): DesktopJobsOwnerRead => ({ sessionId, jobs: disposed ? [] : selectDesktopJobs(fixture.registry.list(sessionId), fixture.now()) }),
+		read: (): DesktopJobsOwnerRead => {
+			if (disposed) return { sessionId, jobs: [], truncated: false };
+			const { jobs, truncated } = selectDesktopJobs(fixture.registry.list(sessionId), fixture.now());
+			return { sessionId, jobs, truncated };
+		},
 		cancel: (id: string) => {
 			if (disposed) return { kind: "not_found" };
 			const job = fixture.registry.get(id);
@@ -174,14 +178,17 @@ test("selectDesktopJobs keeps running first then recent finished, bounded", () =
 	const jobs = [job("job-1", 100, "running"), job("job-2", 200, "exited", 300), job("job-3", 150, "stopped", 400)];
 	const now = 300 + JOBS_FINISHED_TTL_MS - 1;
 	const selected = selectDesktopJobs(jobs, now);
-	assert.deepEqual(selected.map((entry) => entry.id), ["job-1", "job-3", "job-2"], "running first, then finished newest-end first");
+	assert.deepEqual(selected.jobs.map((entry) => entry.id), ["job-1", "job-3", "job-2"], "running first, then finished newest-end first");
+	assert.equal(selected.truncated, false, "a list shorter than the bound is complete");
 
 	// A finished job beyond the TTL drops out.
-	assert.deepEqual(selectDesktopJobs(jobs, 400 + JOBS_FINISHED_TTL_MS).map((entry) => entry.id), ["job-1"]);
+	assert.deepEqual(selectDesktopJobs(jobs, 400 + JOBS_FINISHED_TTL_MS).jobs.map((entry) => entry.id), ["job-1"]);
 
 	// The list is bounded even with far more finished jobs than the limit.
 	const many = Array.from({ length: DESKTOP_JOBS_LIST_LIMIT + 20 }, (_, i) => job(`job-${i}`, i, "exited", i + 1));
-	assert.equal(selectDesktopJobs(many, 10_000).length, DESKTOP_JOBS_LIST_LIMIT);
+	const bounded = selectDesktopJobs(many, 10_000);
+	assert.equal(bounded.jobs.length, DESKTOP_JOBS_LIST_LIMIT);
+	assert.equal(bounded.truncated, true, "the bound is published, never a silent clip");
 });
 
 test("params parsers accept only the documented shapes", () => {
@@ -194,7 +201,7 @@ test("params parsers accept only the documented shapes", () => {
 });
 
 test("isDesktopJobsServiceShape accepts only the versioned adapter", () => {
-	const good = { schema: DESKTOP_JOBS_SERVICE_SCHEMA, read: () => ({ sessionId: "s", jobs: [] }), cancel: () => ({ kind: "not_found" }), observe: () => () => {}, dispose: () => {} };
+	const good = { schema: DESKTOP_JOBS_SERVICE_SCHEMA, read: () => ({ sessionId: "s", jobs: [], truncated: false }), cancel: () => ({ kind: "not_found" }), observe: () => () => {}, dispose: () => {} };
 	assert.equal(isDesktopJobsServiceShape(good), true);
 	assert.equal(isDesktopJobsServiceShape({ ...good, schema: "gentle-pi.desktop-jobs-service/v0" }), false);
 	assert.equal(isDesktopJobsServiceShape({ ...good, cancel: undefined }), false);
@@ -235,6 +242,7 @@ test("list_jobs answers the projected active-session list and emits nothing", as
 		assert.equal(outcome.ok, true);
 		assert.deepEqual((outcome as { ok: true; data: Record<string, unknown> }).data, {
 			jobs: [{ id: "job-1", label: "CI", status: "running", startedAt: 1000 }],
+			truncated: false,
 		});
 		assert.equal(events.length, 0, "a read emits nothing");
 	} finally {
@@ -312,7 +320,7 @@ test("a throwing or malformed owner never leaks raw errors or command text", asy
 	// turned into a failure: the projection rebuilds only whitelisted fields.
 	const malformed: DesktopJobsService = {
 		schema: DESKTOP_JOBS_SERVICE_SCHEMA,
-		read: () => ({ sessionId: "session-a", jobs: [{ id: "j", label: "l", status: "running", startedAt: 1, command: "rm -rf /" }] as unknown as DesktopJobEntry[] }),
+		read: () => ({ sessionId: "session-a", jobs: [{ id: "j", label: "l", status: "running", startedAt: 1, command: "rm -rf /" }] as unknown as DesktopJobEntry[], truncated: false }),
 		cancel: () => ({ kind: "not_found" }),
 		observe: () => () => {},
 		dispose: () => {},
@@ -320,7 +328,7 @@ test("a throwing or malformed owner never leaks raw errors or command text", asy
 	const badBridge = makeBridge(malformed);
 	const bad = await badBridge.bridge.handle("list_jobs", {});
 	assert.equal(bad.ok, true);
-	assert.deepEqual((bad as { ok: true; data: Record<string, unknown> }).data, { jobs: [{ id: "j", label: "l", status: "running", startedAt: 1 }] });
+	assert.deepEqual((bad as { ok: true; data: Record<string, unknown> }).data, { jobs: [{ id: "j", label: "l", status: "running", startedAt: 1 }], truncated: false });
 	assert.equal(JSON.stringify(bad).includes("rm -rf"), false);
 });
 
@@ -396,7 +404,7 @@ test("agent-driven changes become jobs_update events filtered by active session"
 		notify("session-a");
 		assert.equal(events.length, 1);
 		assert.equal(events[0]!.event, DESKTOP_JOBS_EVENT);
-		assert.deepEqual(events[0]!.data, { jobs: [{ id: "job-1", label: "mine", status: "running", startedAt: 1000 }] });
+		assert.deepEqual(events[0]!.data, { jobs: [{ id: "job-1", label: "mine", status: "running", startedAt: 1000 }], truncated: false });
 
 		// A foreign-session change does not reach this bridge.
 		fixture.registry.start({ command: "b", cwd: "/", ownerSessionId: "session-b", label: "theirs" });
@@ -411,7 +419,7 @@ test("session reset disconnects observers and drops stale async outcomes", async
 	const observers = new Set<(sessionId: string) => void>();
 	const service: DesktopJobsService = {
 		schema: DESKTOP_JOBS_SERVICE_SCHEMA,
-		read: () => ({ sessionId: "session-a", jobs: [] }),
+		read: () => ({ sessionId: "session-a", jobs: [], truncated: false }),
 		cancel: () => ({ kind: "not_found" }),
 		observe: (onChange) => { observers.add(onChange); return () => observers.delete(onChange); },
 		dispose: () => { observers.clear(); },
@@ -437,7 +445,7 @@ test("a late discovery after reset is disposed and never cached for the next ses
 	const disposed: string[] = [];
 	const service: DesktopJobsService = {
 		schema: DESKTOP_JOBS_SERVICE_SCHEMA,
-		read: () => ({ sessionId: "session-a", jobs: [] }),
+		read: () => ({ sessionId: "session-a", jobs: [], truncated: false }),
 		cancel: () => ({ kind: "not_found" }),
 		observe: () => () => {},
 		dispose: () => { disposed.push("old"); },
@@ -472,7 +480,7 @@ test("discoverDesktopJobsService accepts the versioned adapter and ignores malfo
 	listeners.set(DESKTOP_JOBS_SERVICE_CHANNEL, (payload) => {
 		(payload as { respond(service: unknown): void }).respond({
 			schema: DESKTOP_JOBS_SERVICE_SCHEMA,
-			read: () => ({ sessionId: "s", jobs: [] }),
+			read: () => ({ sessionId: "s", jobs: [], truncated: false }),
 			cancel: () => ({ kind: "not_found" }),
 			observe: () => () => {},
 			dispose: () => {},
@@ -482,7 +490,7 @@ test("discoverDesktopJobsService accepts the versioned adapter and ignores malfo
 	assert.equal(service?.schema, DESKTOP_JOBS_SERVICE_SCHEMA);
 
 	listeners.set(DESKTOP_JOBS_SERVICE_CHANNEL, (payload) => {
-		(payload as { respond(service: unknown): void }).respond({ schema: "gentle-pi.desktop-jobs-service/v0", read: () => ({ sessionId: "s", jobs: [] }) });
+		(payload as { respond(service: unknown): void }).respond({ schema: "gentle-pi.desktop-jobs-service/v0", read: () => ({ sessionId: "s", jobs: [], truncated: false }) });
 	});
 	assert.equal(await discoverDesktopJobsService(pi, ctx), undefined);
 });
@@ -508,7 +516,7 @@ test("the router publishes a changed cancel response before its jobs_update even
 		await router.handle(JSON.stringify({ schema: DESKTOP_RPC_SCHEMA, requestId: "cancel-1", method: "cancel_job", params: { id: job.id } }));
 		assert.deepEqual(lines.map((line) => JSON.parse(line).kind), ["response", "event"]);
 		assert.equal(JSON.parse(lines[0]!).requestId, "cancel-1");
-		assert.deepEqual(JSON.parse(lines[1]!).data, { jobs: [{ id: "job-1", label: "CI", status: "stopped", startedAt: 1000, endedAt: 1000 }] });
+		assert.deepEqual(JSON.parse(lines[1]!).data, { jobs: [{ id: "job-1", label: "CI", status: "stopped", startedAt: 1000, endedAt: 1000 }], truncated: false });
 	} finally {
 		fixture.cleanup();
 	}
@@ -760,7 +768,7 @@ test("the real owner notifies a monitor self-timeout exactly once and suppresses
 
 	await monitor.execute(undefined, { command: "tail -f app.log", timeout_seconds: 1 }, undefined, undefined, harness.ctx);
 	assert.equal(harness.events.length, 1, "the monitor start emits one jobs_update");
-	assert.deepEqual(harness.events[0]!.data, { jobs: [{ id: "job-1", label: "Background monitor", status: "running", startedAt: 1000 }] });
+	assert.deepEqual(harness.events[0]!.data, { jobs: [{ id: "job-1", label: "Background monitor", status: "running", startedAt: 1000 }], truncated: false });
 
 	// A pending output line means the self-stop flushes events (refresh while
 	// still running, byte-identical list) before the stopped notice (refresh
@@ -772,6 +780,7 @@ test("the real owner notifies a monitor self-timeout exactly once and suppresses
 	assert.equal(harness.events.length, 2, "the monitor self-stop emits exactly one more jobs_update");
 	assert.deepEqual(harness.events[1]!.data, {
 		jobs: [{ id: "job-1", label: "Background monitor", status: "stopped", startedAt: 1000, endedAt: 1000 }],
+		truncated: false,
 	});
 });
 
@@ -786,6 +795,7 @@ test("the real owner notifies a monitor self-timeout once even without pending l
 	assert.equal(harness.events.length, 2, "start then stop, exactly once each");
 	assert.deepEqual(harness.events[1]!.data, {
 		jobs: [{ id: "job-1", label: "Background monitor", status: "stopped", startedAt: 1000, endedAt: 1000 }],
+		truncated: false,
 	});
 });
 

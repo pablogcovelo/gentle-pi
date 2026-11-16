@@ -706,7 +706,8 @@ Success:
     "jobs": [
       { "id": "job-1", "label": "CI for PR 42", "status": "running", "startedAt": 1788600000000 },
       { "id": "job-2", "label": "Deploy staging", "status": "exited", "startedAt": 1788599000000, "endedAt": 1788599500000, "exitCode": 0 }
-    ]
+    ],
+    "truncated": false
   }
 }
 ```
@@ -716,13 +717,13 @@ Each entry carries only the whitelisted fields of the owner's `JobRecord`:
 | Field | Meaning |
 | --- | --- |
 | `id` | The owner's opaque job identifier. |
-| `label` | The label the agent gave the job. A job started without one shows a fixed `Background job` (or `Background monitor` for a monitor): no part of its command, program name, arguments or paths crosses the wire, because a command can hide a secret in more shell forms than a parser could safely strip. |
+| `label` | The label the agent gave the job, clipped to 200 characters. A job started without one shows a fixed `Background job` (or `Background monitor` for a monitor): no part of its command, program name, arguments or paths crosses the wire, because a command can hide a secret in more shell forms than a parser could safely strip. |
 | `status` | One of `running`, `exited`, `stopped`, or `failed`. |
 | `startedAt` | When the job started, in milliseconds. |
 | `endedAt` | When a non-running job ended, present only after it ends. |
 | `exitCode` | The job's own exit code, present only when the owner recorded one (`null` for an exit without a code). |
 
-No command text, working directory, output path or tail, environment, owner session id, monitor counters, or error string ever crosses the wire. The list is bounded: running jobs first (newest start first), then recently-finished jobs (newest end first) within a 60-second linger, capped at 50 entries, so the answer can never grow with the process lifetime. When the jobs owner is absent (the owning extension is not loaded), the answer is `jobs_unavailable` — never a fabricated empty list.
+No command text, working directory, output path or tail, environment, owner session id, monitor counters, or error string ever crosses the wire. The list is bounded: running jobs first (newest start first), then recently-finished jobs (newest end first) within a 60-second linger, capped at 50 entries, so the answer can never grow with the process lifetime. Beside the list, `truncated` is a fact rather than an unknown — `false` when the answer carries everything the owner held, `true` when the 50-entry bound dropped entries — so a client never renders a clipped list as complete. When the jobs owner is absent (the owning extension is not loaded), the answer is `jobs_unavailable` — never a fabricated empty list.
 
 ### `cancel_job`
 
@@ -783,7 +784,8 @@ Success:
         "lastStep": "answered",
         "usage": { "total": 15234, "cost": 0.0421, "input": 12000, "output": 3234, "cache": 5000, "reasoning": 4000 }
       }
-    ]
+    ],
+    "truncated": false
   }
 }
 ```
@@ -802,7 +804,7 @@ Each entry carries only the whitelisted fields of the owner's `TaskRecord`:
 | `lastStep` | A closed phase label derived from the task status, never the raw owner step text: `queued`, `waiting`, `running`, a fixed safe active step (`starting`, `writing`, `cleaning up`, `generating tool arguments`, `question dismissed`, `answered`, `interrupted`), or the generic terminal reason (`completed`, `failed`, `cancelled`, `timed_out`). Raw `TaskRecord.lastStep` text can carry an error message, a stderr tail, or a provider body, so it is mapped into this closed vocabulary and never forwarded. |
 | `usage` | The helper's accumulated usage: `total` tokens, `cost`, and — once the run settled — the final-assistant `input`, `output`, `cache` (read + write), and `reasoning` token breakdown. The breakdown fields are absent for an in-flight task whose breakdown is not recorded yet, and for a restored finished task whose run never recorded one. |
 
-No prompt text, tool arguments or output, working directory, session path, result, error text, or full session internals ever cross the wire. The list is bounded: active tasks first (recency order), then recently-finished tasks (newest end first), capped at 50 entries, so the answer can never grow with the process lifetime. When the agents owner is absent (the owning extension is not loaded), the answer is `agents_unavailable` — never a fabricated empty list.
+No prompt text, tool arguments or output, working directory, session path, result, error text, or full session internals ever cross the wire. Freeform text is clipped at its own bound rather than refused: `agent` at 200 characters, `model` and `fallbackFrom` at 128, `modelSource` at 64, and `thinking` at 32; `lastStep` is a closed label whose text always comes from the fixed vocabulary above. The list is bounded: active tasks first (recency order), then recently-finished tasks (newest end first), capped at 50 entries, so the answer can never grow with the process lifetime. Beside the list, `truncated` is a fact rather than an unknown — `false` when the answer carries everything the owner held, `true` when the 50-entry bound dropped entries — so a client never renders a clipped list as complete. When the agents owner is absent (the owning extension is not loaded), the answer is `agents_unavailable` — never a fabricated empty list.
 
 ### `cancel_subagent`
 
@@ -932,12 +934,13 @@ The answer carries the owner's real shape — `root`, optional `branch`, and `mo
       "added": 12,
       "deleted": 3,
       "digest": "1a2b3c4d5e6f7081"
-    }
+    },
+    "truncated": false
   }
 }
 ```
 
-`file.path` is relative to `root`; `status` is one of `modified`, `added`, `deleted`, `renamed`, `untracked`. An untracked file carries `countsUnavailable` until its lines were actually counted — `added: 0` is never the only signal for it. A clean root answers an empty `model` and no `branch` claim. The states Gentle Shell labels are part of the contract: a root whose scan failed answers `{ "root": "…", "failed": true }`, and a root with no commits yet answers `{ "root": "…", "unborn": true }` — each with no `model`, never zero files or zero lines. `branch` is `unknown` when the root's own branch cannot be read. The method has no event.
+`file.path` is relative to `root`; `status` is one of `modified`, `added`, `deleted`, `renamed`, `untracked`. An untracked file carries `countsUnavailable` until its lines were actually counted — `added: 0` is never the only signal for it. `branch` is clipped at 200 characters, so a pathological ref name cannot stretch the answer. The file list is bounded at 200 entries: a root with more changed files answers the first 200 paths beside `truncated: true`, while `model.added`, `model.deleted` and `model.digest` keep describing every file the tracker scanned — the totals never understate a clipped list, and a client renders the clip, never a silently short panel. A clean root answers an empty `model` and no `branch` claim. The states Gentle Shell labels are part of the contract: a root whose scan failed answers `{ "root": "…", "failed": true }`, and a root with no commits yet answers `{ "root": "…", "unborn": true }` — each with no `model`, never zero files or zero lines, and no `truncated` claim because there is no list to bound. `branch` is `unknown` when the root's own branch cannot be read. The method has no event.
 
 ### `mcp_status`
 
@@ -1008,7 +1011,8 @@ Returns the native action classification as data: tool name or pattern mapped to
       { "category": "read", "glyph": "≡", "tools": ["read"] },
       { "category": "delegation", "glyph": "→", "tools": ["subagent_run"], "heading": "Delegating" },
       { "category": "rdd", "glyph": "🌹", "patterns": ["gentle_review*"], "heading": "rdd" }
-    ]
+    ],
+    "truncated": false
   }
 }
 ```
@@ -1019,7 +1023,7 @@ Returns the native action classification as data: tool name or pattern mapped to
 { "schema": "gentle-shell.desktop-rpc/v1", "kind": "response", "requestId": "desktop-68", "ok": true, "data": { "tool": "grep", "matched": true, "category": "search", "glyph": "⌕" } }
 ```
 
-The payload is pure data — no rendering function crosses the contract — and the method has no event.
+The payload is pure data — no rendering function crosses the contract — and the method has no event. The full read is bounded at 128 entries, with `truncated: true` beside `entries` when the owner's own table ever outgrows that bound and `false` when it does not; `categories` is the native closed set and is published whole.
 
 ## Responses
 
@@ -1212,12 +1216,13 @@ Carries the active session's projected background-job list whenever the existing
   "data": {
     "jobs": [
       { "id": "job-1", "label": "CI for PR 42", "status": "stopped", "startedAt": 1788600000000, "endedAt": 1788601000000 }
-    ]
+    ],
+    "truncated": false
   }
 }
 ```
 
-`jobs` is the same whitelisted, bounded projection as `list_jobs` (`id`, `label`, `status`, `startedAt`, `endedAt?`, `exitCode?`), so a client that missed a response can reconcile from the event alone. The event is filtered to the active owner session; a foreign-session change emits nothing to this bridge. A no-op or failed cancellation emits nothing: an already-terminal `cancel_job` (or `job_stop` on a job that already ended) changes nothing, so no event follows. When a changed `cancel_job` triggers the event, its response line always precedes the event line through the same router sequencer.
+`jobs` is the same whitelisted, bounded projection as `list_jobs` (`id`, `label`, `status`, `startedAt`, `endedAt?`, `exitCode?`), carrying the same `truncated` fact beside it, so a client that missed a response can reconcile from the event alone. The event is filtered to the active owner session; a foreign-session change emits nothing to this bridge. A no-op or failed cancellation emits nothing: an already-terminal `cancel_job` (or `job_stop` on a job that already ended) changes nothing, so no event follows. When a changed `cancel_job` triggers the event, its response line always precedes the event line through the same router sequencer.
 
 ### `agents_update`
 
@@ -1232,12 +1237,13 @@ Carries the active session's projected subagent list whenever the existing agent
   "data": {
     "agents": [
       { "id": "m3a1-worker", "agent": "worker", "status": "cancelled", "model": "anthropic/claude-sonnet-4", "lastStep": "completed", "usage": { "total": 15234, "cost": 0.0421 } }
-    ]
+    ],
+    "truncated": false
   }
 }
 ```
 
-`agents` is the same whitelisted, bounded projection as `list_subagents` (`id`, `agent`, `status`, `model`, `modelSource?`, `fallbackFrom?`, `thinking?`, `lastStep`, `usage`), so a client that missed a response can reconcile from the event alone. The event is filtered to the active owner session; a foreign-session transition emits nothing to this bridge. Bursts of transitions are coalesced into one event per window and byte-identical projected lists are deduped, matching the activity publisher. A no-op or failed cancellation emits nothing: an already-terminal `cancel_subagent` changes nothing, so no event follows. When a changed `cancel_subagent` triggers the event, its response line always precedes the event line through the same router sequencer.
+`agents` is the same whitelisted, bounded projection as `list_subagents` (`id`, `agent`, `status`, `model`, `modelSource?`, `fallbackFrom?`, `thinking?`, `lastStep`, `usage`), carrying the same `truncated` fact beside it, so a client that missed a response can reconcile from the event alone. The event is filtered to the active owner session; a foreign-session transition emits nothing to this bridge. Bursts of transitions are coalesced into one event per window and byte-identical projected lists are deduped, matching the activity publisher. A no-op or failed cancellation emits nothing: an already-terminal `cancel_subagent` changes nothing, so no event follows. When a changed `cancel_subagent` triggers the event, its response line always precedes the event line through the same router sequencer.
 
 ### `profile_applied`
 
@@ -1338,7 +1344,7 @@ The event rides the same router sequencer as every other event: `seq` keeps the 
 - **One owner, no second registry or process manager.** `list_jobs`, `cancel_job`, and the `jobs_update` event reach the existing jobs owner — the single parent-session `JobRegistry` plus the parent `MonitorController` — through a defensive, versioned owner-service adapter, the jobs analogue of the usage and design seams. There is no second registry, no second process manager, no subagent cancellation, and no cached copy.
 - **List + cancel only.** This slice has exactly two methods, `list_jobs` and `cancel_job`, and one event, `jobs_update`. It does not start jobs: `bash_background` and `monitor` stay agent tools, and there is no run/start method on this channel. `cancel_job` is `job_stop`'s exact stop path — the monitor controller's `cancel` (dropping timers and pending lines) followed by the registry's `stop` (aborting the process tree) — not a second stop implementation.
 - **Safe projection only.** The wire carries exactly `id`, `label`, `status`, `startedAt`, `endedAt?`, and `exitCode?`. No command text, working directory, output path or tail, environment, owner session id, monitor counters, or error string is ever returned or logged. A foreign field on an owner entry is dropped by the projection, never echoed.
-- **Bounded list.** `list_jobs` returns running jobs first (newest start first), then recently-finished jobs (newest end first) within a 60-second linger, capped at 50 entries. Finished jobs older than the linger drop out, so the answer can never grow with the process lifetime. That expiry is time-based and emits no `jobs_update`; a client that shows finished jobs should age them out with the same 60-second linger or re-read `list_jobs`.
+- **Bounded list.** `list_jobs` returns running jobs first (newest start first), then recently-finished jobs (newest end first) within a 60-second linger, capped at 50 entries. Finished jobs older than the linger drop out, so the answer can never grow with the process lifetime. That expiry is time-based and emits no `jobs_update`; a client that shows finished jobs should age them out with the same 60-second linger or re-read `list_jobs`. Every answer carries `truncated` beside the list: `true` only when the 50-entry bound dropped entries, `false` otherwise, so a panel showing fewer jobs than the owner holds is never presented as the whole set. The label is the one freeform text on the entry and is clipped at 200 characters — clipped, never refused, and never derived from the command.
 - **No-op and failure mean no event.** A `cancel_job` on an already-terminal job answers that terminal state with no event, and a `cancel_job` on an unknown or foreign id answers `not_found` with no event. A `job_stop` that finds the job already terminal likewise changes nothing and emits nothing. Only an actual registry change (start, settle, or a running→stopped transition) emits `jobs_update`.
 - **Agent work reaches the app.** The bridge subscribes to the owner eagerly at session start, so a job started or stopped by the agent (or any other path through the owner) still arrives as a `jobs_update` event. Every actual registry change funnels through the owner's single `refreshJobStatus` path, including a monitor's self-timeout/flood stop, so no stop path can bypass the notification. The bridge dedupes byte-identical projected lists, so a stop that also flushes pending lines still emits exactly once. Session replacement or shutdown disconnects the observer and drops late outcomes, and the router's own publisher guard drops superseded events. A changed `cancel_job`'s response always precedes its event.
 - **Truthful absence.** When the owning extension is not loaded, `list_jobs` and `cancel_job` answer `jobs_unavailable` rather than inventing an empty list or a fake stop. A job that exists but belongs to another session is indistinguishable from an unknown id at this boundary: both answer `not_found`.
@@ -1348,7 +1354,8 @@ The event rides the same router sequencer as every other event: `seq` keeps the 
 - **One owner, no second store or runner.** `list_subagents`, `cancel_subagent`, and the `agents_update` event reach the existing agents owner — the single parent-session `TaskStore` plus the parent `AgentRunner` — through a defensive, versioned owner-service adapter, the agents analogue of the jobs seam. There is no second store, no second runner, no subagent spawning, and no cached copy.
 - **List + cancel only.** This slice has exactly two methods, `list_subagents` and `cancel_subagent`, and one event, `agents_update`. It does not start subagents: the agent dispatch tools stay agent tools, and there is no run/start method on this channel. `cancel_subagent` is the agents panel's exact stop path — `runner.cancel` — not a second stop implementation and never a request to the model to stop itself.
 - **Safe projection only.** The wire carries exactly `id`, `agent`, `status`, `model`, `modelSource?`, `fallbackFrom?`, `thinking?`, `lastStep`, and `usage` (`total`, `cost`, and the final-assistant `input`/`output`/`cache`/`reasoning` breakdown when recorded). `lastStep` is a closed, status-derived phase label, never the raw owner step text, which can carry an error message, a stderr tail, or a provider body. No prompt text, tool arguments or output, working directory, session path, result, error text, or full session internals is ever returned or logged. A foreign field on an owner entry is dropped by the projection, never echoed.
-- **Bounded list.** `list_subagents` returns active tasks first (recency order), then recently-finished tasks (newest end first), capped at 50 entries. The store already evicts finished tasks beyond its own retention, so the answer can never grow with the process lifetime.
+- **Bounded list.** `list_subagents` returns active tasks first (recency order), then recently-finished tasks (newest end first), capped at 50 entries. The store already evicts finished tasks beyond its own retention, so the answer can never grow with the process lifetime. Every answer carries `truncated` beside the list: `true` only when the 50-entry bound dropped entries, `false` otherwise, so a panel showing fewer helpers than the store holds is never presented as the whole set.
+- **Bounded text.** The entry's freeform strings are clipped at their own bound rather than refused or echoed whole: `agent` 200, `model` and `fallbackFrom` 128, `modelSource` 64, `thinking` 32. `lastStep` is closed, so it has no bound to hit.
 - **No-op and failure mean no event.** A `cancel_subagent` on an already-terminal task answers that terminal state with no event, and a `cancel_subagent` on an unknown or foreign id answers `not_found` with no event. A running task's cancel is requested but asynchronous: the response reports the still-`running` state and emits no immediate byte-identical event; only the real store transition (the child exit to `cancelled`) emits through the normal `agents_update` path. Only an actual TaskStore transition (add, status change, or the completion-time usage recording) emits `agents_update`.
 - **Usage persists across restore.** The completion-time usage breakdown is written to the task's history record, so a restored finished task keeps its final breakdown. A task whose run never recorded a breakdown (no final-assistant observation) has no breakdown fields after restore.
 - **Agent work reaches the app.** The bridge subscribes to the owner eagerly at session start, so a subagent started or settled by the agent (or any other path through the owner) still arrives as an `agents_update` event. Bursts of transitions are coalesced into one event per window and byte-identical projected lists are deduped, so a settle that records usage right after its status change still emits exactly once. Session replacement or shutdown disconnects the observer, cancels the pending coalesced flush, and drops late outcomes, and the router's own publisher guard drops superseded events. A changed `cancel_subagent`'s response always precedes its event.
@@ -1368,6 +1375,7 @@ The event rides the same router sequencer as every other event: `seq` keeps the 
 - **Read-only, roots of this session only.** The only Git work is the four read-only vectors above (plus `symbolic-ref --quiet --short HEAD` for a root discovery cannot describe). There is no branch or worktree policy and no new policy owner. The requested root must be the session's project root or one of its registered change roots, so a Desktop request can never point this read at an arbitrary path.
 - **Truthful labels, real shapes.** A failed or unborn root is labeled (`failed` / `unborn`) and carries no model, never zero files or zero lines; counts live in `model.added`/`model.deleted`. Raw git stderr, absolute paths beyond the requested `root`, and environment values never cross the contract.
 - **Counts are labeled, never silent zeros.** An untracked file never appears in `diff --numstat` (`lib/shell-changes.ts:118` would answer `added: 0` for it), and the shell's per-file untracked-line counter is private to the shell extension, so without a counter nothing measured its lines: the projection labels every unmeasured untracked file `countsUnavailable` instead of letting `added: 0` claim a measured zero, and recomputes `model.digest` over the labeled files. `model.added` and `model.deleted` stay the tracker's own sums of measured line counts (tracked files), the same numbers the footer renders with its partial-counts note. When a counter is wired, a measured untracked file answers with its real count and no label. Hoisting the real counter into `lib/` — a T0-style extraction, not this task — is the follow-up.
+- **Bounded file list.** One answer carries at most 200 changed files, with `truncated: true` beside it only when the scan found more (always `false` otherwise, and absent from a `failed`/`unborn` answer, which has no list). The clip touches the published window only: `model.added`, `model.deleted` and `model.digest` stay the tracker's own facts about the whole scan, so a clipped list never turns into an understated total. `branch` is clipped at 200 characters.
 - **Truthful absence.** Without a bound session, the method answers `worktree_unavailable` rather than an empty result.
 
 ## MCP limits
@@ -1391,6 +1399,7 @@ The event rides the same router sequencer as every other event: `seq` keeps the 
 - **Pure data.** No `pi-tui` import and no render-module import appear in the owner or the bridge; the payload survives a JSON round-trip unchanged. Glyphs and headings are the exact strings the TUI already renders, pinned by render regression tests against the untouched components.
 - **Unpublished families stay absent.** There is no `memory` category: no `mem_*` tool is registered in this repository (Engram ships as a separate companion package), so the tests certify the family's absence instead of inventing it, and a tool name outside every category answers `matched: false`, never a placeholder category.
 - **Read-only and stateless.** The bridge holds no host and no state: the read has no side effect, publishes no event, and depends on no session binding.
+- **Bounded entries.** The full read publishes at most 128 vocabulary entries, with `truncated: true` beside `entries` only when the owner's table outgrew that bound. The closed table in `lib/tool-vocabulary.ts` fits well inside it today, so the flag is `false` and the cap exists only to keep a future table from stretching one answer.
 
 ## Session state limits
 

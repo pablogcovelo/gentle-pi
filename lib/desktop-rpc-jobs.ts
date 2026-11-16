@@ -44,10 +44,22 @@ export interface DesktopJobEntry {
 	exitCode?: number | null;
 }
 
+/**
+ * The bounded `list_jobs` window: the projected jobs plus the one fact a client
+ * cannot derive from a clipped list. `truncated` is a fact, not an unknown, so
+ * it is always published.
+ */
+export interface DesktopJobsSelection {
+	jobs: DesktopJobEntry[];
+	truncated: boolean;
+}
+
 /** The owner's list answer for one session: which session, plus its projected jobs. */
 export interface DesktopJobsOwnerRead {
 	sessionId: string;
 	jobs: DesktopJobEntry[];
+	/** Whether `DESKTOP_JOBS_LIST_LIMIT` dropped entries from `jobs`. */
+	truncated: boolean;
 }
 
 /**
@@ -77,6 +89,9 @@ export const INVALID_JOBS_PARAMS = { code: "invalid_request", message: "Invalid 
 export const JOBS_UNAVAILABLE = { code: "jobs_unavailable", message: "Background jobs owner unavailable for this session" } as const;
 export const JOB_NOT_FOUND = { code: "not_found", message: "No background job with that id in this session" } as const;
 
+/** Upper bound on the label text one entry carries; a longer label is clipped. */
+export const DESKTOP_JOB_LABEL_LIMIT = 200;
+
 /** Shown for a command job the agent started without a label. */
 export const DESKTOP_JOB_FALLBACK_LABEL = "Background job";
 /** Shown for a monitor the agent started without a label. */
@@ -89,9 +104,15 @@ export const DESKTOP_MONITOR_FALLBACK_LABEL = "Background monitor";
  * quoted or escaped assignments, substitutions) than any parser here could
  * safely cover, so no part of it is derived: the label is fixed by kind.
  */
+function fallbackLabel(kind: JobRecord["kind"]): string {
+	return kind === "monitor" ? DESKTOP_MONITOR_FALLBACK_LABEL : DESKTOP_JOB_FALLBACK_LABEL;
+}
+
 export function desktopJobLabel(job: Pick<JobRecord, "label" | "command" | "kind">): string {
-	if (job.label.trim() !== job.command.trim()) return job.label;
-	return job.kind === "monitor" ? DESKTOP_MONITOR_FALLBACK_LABEL : DESKTOP_JOB_FALLBACK_LABEL;
+	const label = job.label.trim() === job.command.trim() ? fallbackLabel(job.kind) : job.label;
+	return label.length <= DESKTOP_JOB_LABEL_LIMIT
+		? label
+		: `${label.slice(0, DESKTOP_JOB_LABEL_LIMIT - 1)}…`;
 }
 
 /**
@@ -117,14 +138,18 @@ export function projectDesktopJob(job: JobRecord): DesktopJobEntry {
  * never grow with the lifetime of the process. Finished jobs older than the
  * TTL drop out, matching the jobs widget's lingering semantics.
  */
-export function selectDesktopJobs(jobs: readonly JobRecord[], now: number): DesktopJobEntry[] {
+export function selectDesktopJobs(jobs: readonly JobRecord[], now: number): DesktopJobsSelection {
 	const running = jobs
 		.filter((job) => job.status === "running")
 		.sort((left, right) => right.startedAt - left.startedAt);
 	const finished = jobs
 		.filter((job) => job.status !== "running" && job.endedAt !== undefined && now - job.endedAt < JOBS_FINISHED_TTL_MS)
 		.sort((left, right) => (right.endedAt ?? 0) - (left.endedAt ?? 0));
-	return [...running, ...finished].slice(0, DESKTOP_JOBS_LIST_LIMIT).map(projectDesktopJob);
+	const ordered = [...running, ...finished];
+	return {
+		jobs: ordered.slice(0, DESKTOP_JOBS_LIST_LIMIT).map(projectDesktopJob),
+		truncated: ordered.length > DESKTOP_JOBS_LIST_LIMIT,
+	};
 }
 
 /**

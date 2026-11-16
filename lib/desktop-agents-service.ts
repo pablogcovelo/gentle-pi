@@ -29,6 +29,8 @@ const DEFAULT_COALESCE_MS = 150;
 /** The `agents_update` event payload: the active session's projected subagent list. */
 export interface DesktopAgentsUpdateEvent {
 	agents: DesktopAgentEntry[];
+	/** Whether the owner's bound dropped entries from `agents`. */
+	truncated: boolean;
 }
 
 interface HostUiAgentsRequest { context: ExtensionContext; respond(service: DesktopAgentsService): void }
@@ -64,6 +66,9 @@ interface DesktopAgentsBridgeOptions {
 
 function defaultSchedule(fn: () => void, ms: number): () => void {
 	const timer = setTimeout(fn, ms);
+	// SAFETY: pi's host may or may not hand back a Node timer; `unref` is read
+	// only when the runtime actually provides it, so an absent member is a no-op
+	// rather than a cast that claims a shape the host never promised.
 	(timer as unknown as { unref?: () => void }).unref?.();
 	return () => clearTimeout(timer);
 }
@@ -220,7 +225,7 @@ export class DesktopAgentsBridge {
 		const key = JSON.stringify(read.agents);
 		if (key === this.lastEmittedAgents) return;
 		this.lastEmittedAgents = key;
-		emit(DESKTOP_AGENTS_EVENT, { agents: read.agents } satisfies DesktopAgentsUpdateEvent);
+		emit(DESKTOP_AGENTS_EVENT, { agents: read.agents, truncated: read.truncated } satisfies DesktopAgentsUpdateEvent);
 	}
 
 	private activeSessionId(host: ExtensionContext): string {
@@ -233,7 +238,7 @@ export class DesktopAgentsBridge {
 			if (!read || typeof read !== "object") return undefined;
 			const agents = this.parseAgents(read.agents);
 			if (agents === undefined) return undefined;
-			return { sessionId: read.sessionId, agents };
+			return { sessionId: read.sessionId, agents, truncated: read.truncated === true };
 		} catch {
 			// Raw owner failures carry prompt text and path detail; none of it
 			// crosses the contract. An unreadable owner is treated as absent.
@@ -255,7 +260,7 @@ export class DesktopAgentsBridge {
 	private list(service: DesktopAgentsService): DesktopRpcOutcome {
 		const read = this.readOwner(service);
 		if (!read) return { ok: false, error: AGENTS_UNAVAILABLE };
-		return { ok: true, data: { agents: read.agents } as unknown as Record<string, unknown> };
+		return { ok: true, data: { agents: read.agents, truncated: read.truncated } };
 	}
 
 	private cancel(service: DesktopAgentsService, params: Record<string, unknown>): DesktopRpcOutcome {
@@ -273,7 +278,7 @@ export class DesktopAgentsBridge {
 		// The owner's projected entry crosses the event bus: re-validate it.
 		const agent = parseDesktopAgentEntry(outcome.agent);
 		if (agent === undefined) return { ok: false, error: AGENTS_UNAVAILABLE };
-		const data = { agent } as unknown as Record<string, unknown>;
+		const data = { agent };
 		// A no-op (already-terminal) cancellation changes nothing: answer the
 		// terminal state and emit no event.
 		if (outcome.changed !== true) return { ok: true, data };
@@ -287,7 +292,7 @@ export class DesktopAgentsBridge {
 			data,
 			event: {
 				name: DESKTOP_AGENTS_EVENT,
-				data: { agents } satisfies DesktopAgentsUpdateEvent,
+				data: { agents, truncated: read?.truncated === true } satisfies DesktopAgentsUpdateEvent,
 			},
 		};
 	}

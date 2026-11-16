@@ -103,10 +103,23 @@ export interface DesktopAgentEntry {
 	usage: DesktopAgentUsage;
 }
 
+/**
+ * The bounded `list_subagents` window: the projected agents plus the one fact a
+ * client cannot derive from a clipped list. `truncated` is a fact, not an
+ * unknown, so it is always published — `false` means the owner held nothing
+ * more than the answer carries.
+ */
+export interface DesktopAgentsSelection {
+	agents: DesktopAgentEntry[];
+	truncated: boolean;
+}
+
 /** The owner's list answer for one session: which session, plus its projected agents. */
 export interface DesktopAgentsOwnerRead {
 	sessionId: string;
 	agents: DesktopAgentEntry[];
+	/** Whether `DESKTOP_AGENTS_LIST_LIMIT` dropped entries from `agents`. */
+	truncated: boolean;
 }
 
 /**
@@ -188,12 +201,16 @@ export function projectDesktopAgent(task: TaskRecord): DesktopAgentEntry {
  * already evicts finished tasks beyond its own retention, so no separate
  * linger window is needed here.
  */
-export function selectDesktopAgents(tasks: readonly TaskRecord[]): DesktopAgentEntry[] {
+export function selectDesktopAgents(tasks: readonly TaskRecord[]): DesktopAgentsSelection {
 	const active = tasks.filter((task) => !FINISHED_STATUSES.includes(task.status));
 	const finished = tasks
 		.filter((task) => FINISHED_STATUSES.includes(task.status))
 		.sort((left, right) => (right.endedAt ?? 0) - (left.endedAt ?? 0));
-	return [...active, ...finished].slice(0, DESKTOP_AGENTS_LIST_LIMIT).map(projectDesktopAgent);
+	const ordered = [...active, ...finished];
+	return {
+		agents: ordered.slice(0, DESKTOP_AGENTS_LIST_LIMIT).map(projectDesktopAgent),
+		truncated: ordered.length > DESKTOP_AGENTS_LIST_LIMIT,
+	};
 }
 
 function reportedTokens(measurement: ChildTokenMeasurement): number {
