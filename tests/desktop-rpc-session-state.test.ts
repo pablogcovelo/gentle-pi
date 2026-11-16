@@ -4,6 +4,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import desktopRpc from "../extensions/gentle-desktop-rpc.ts";
 import { DESKTOP_RPC_SCHEMA } from "../lib/desktop-rpc.ts";
 import { DesktopSessionStateBridge } from "../lib/desktop-rpc-session-state.ts";
+import { oddPhaseRegistry } from "../lib/odd-phase.ts";
 import { INTERACTIVE_HOST_ENV } from "../lib/rpc-host.ts";
 
 // ---- Fakes: pi event bus + a session context carrying the real owners ----
@@ -166,6 +167,50 @@ test("a settle that only moves the cost emits exactly one more event", async () 
 	] }));
 	assert.equal(emitted.length, 2, "a cost-only change delivers exactly one event");
 	assert.equal(emitted[1]!.data.cost, 0.5);
+});
+
+// ---- ODD phase: the owner's value, and clearing by omission ----
+
+test("the settled event carries the ODD phase the registry holds for this session", (t) => {
+	t.after(() => oddPhaseRegistry.clear("session-1"));
+	const { bridge, emitted } = sessionStateBridge();
+	oddPhaseRegistry.report("session-1", "implementing");
+	bridge.settle(fakeCtx());
+	assert.equal(
+		emitted[0]!.data.oddPhase,
+		"implementing",
+		"the owner's phase token travels, never its display label",
+	);
+});
+
+test("a session with no ODD phase omits the field instead of claiming one", (t) => {
+	t.after(() => oddPhaseRegistry.clear("session-1"));
+	oddPhaseRegistry.clear("session-1");
+	const { bridge, emitted } = sessionStateBridge();
+	bridge.settle(fakeCtx());
+	assert.equal(emitted.length, 1, "the other fields still deliver the state");
+	assert.equal("oddPhase" in emitted[0]!.data, false, "an unknown phase is omitted, never a placeholder");
+});
+
+test("another session's phase never reaches this session's event", (t) => {
+	t.after(() => oddPhaseRegistry.clear("session-2"));
+	const { bridge, emitted } = sessionStateBridge();
+	oddPhaseRegistry.report("session-2", "checking");
+	bridge.settle(fakeCtx());
+	assert.equal("oddPhase" in emitted[0]!.data, false, "the phase is read for this session only");
+});
+
+test("clearing the phase is published as omission, not as a stale token", (t) => {
+	t.after(() => oddPhaseRegistry.clear("session-1"));
+	const { bridge, emitted } = sessionStateBridge();
+	oddPhaseRegistry.report("session-1", "implementing");
+	bridge.settle(fakeCtx());
+	assert.equal(emitted[0]!.data.oddPhase, "implementing");
+
+	oddPhaseRegistry.clear("session-1");
+	bridge.settle(fakeCtx());
+	assert.equal(emitted.length, 2, "a cleared phase is a real change and delivers one event");
+	assert.equal("oddPhase" in emitted[1]!.data, false, "cleared means omitted");
 });
 
 // ---- Availability is per field: unavailable is omitted, never zero ----

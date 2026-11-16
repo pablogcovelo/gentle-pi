@@ -8,6 +8,7 @@
 // event when the projection differs from the last one it delivered.
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { oddPhaseRegistry, type OddPhase } from "./odd-phase.ts";
 import { readSessionCost } from "./session-cost.ts";
 
 export const DESKTOP_SESSION_STATE_EVENT = "session_state_changed";
@@ -33,6 +34,12 @@ export interface DesktopSessionStateEvent {
 	 * the owner answers a number, so a fresh session's own `0` survives while an
 	 * unmeasurable session omits the field instead of claiming a zero. */
 	cost?: number;
+	/** The ODD phase `lib/odd-phase.ts` holds for this session: present only
+	 * while the registry has one, omitted when it is unknown, so a client clears
+	 * its label by omission instead of reading a stale phase. The value is the
+	 * owner's phase token (`implementing`), never its display label, and it is
+	 * never inferred from transcript text or from a tool name here. */
+	oddPhase?: OddPhase;
 }
 
 /** The effective model as `ctx.model` exposes it (the footer's `modelId` read). */
@@ -58,6 +65,7 @@ export function projectSessionState(
 	thinkingLevel: unknown,
 	usage: { tokens?: unknown; percent?: unknown; contextWindow?: unknown } | undefined,
 	cost?: unknown,
+	oddPhase?: OddPhase,
 ): DesktopSessionStateEvent {
 	const state: DesktopSessionStateEvent = {};
 	if (model && typeof model.id === "string" && model.id.length > 0) state.model = model.id;
@@ -73,6 +81,9 @@ export function projectSessionState(
 	// The cost owner answers `undefined` when it cannot measure, and that is
 	// unavailability: the field is omitted, never zeroed. A real `0` is a fact.
 	if (finiteNumber(cost)) state.cost = cost;
+	// The ODD phase owner answers `undefined` for a session with no phase, and
+	// clearing it is exactly that omission: the client drops its label.
+	if (oddPhase !== undefined) state.oddPhase = oddPhase;
 	return state;
 }
 
@@ -139,6 +150,21 @@ export class DesktopSessionStateBridge {
 	}
 
 	/**
+	 * The ODD phase the single owner in `lib/odd-phase.ts` holds for this
+	 * session right now. The registry is the process-wide singleton both
+	 * extensions read (the shell's own working label uses the same one), so this
+	 * is a read of that owner, not a second store; an unreadable session answers
+	 * no phase and the field is omitted.
+	 */
+	private oddPhase(ctx: ExtensionContext): OddPhase | undefined {
+		try {
+			return oddPhaseRegistry.get(ctx.sessionManager?.getSessionId?.());
+		} catch {
+			return undefined;
+		}
+	}
+
+	/**
 	 * Read the owners once, synchronously, and emit at most one event. Every
 	 * read happens inside a single synchronous dispatch — pi delivers one event
 	 * at a time on the same thread — so the payload cannot be torn by an
@@ -160,7 +186,7 @@ export class DesktopSessionStateBridge {
 			}
 		}
 		const usage = typeof ctx.getContextUsage === "function" ? ctx.getContextUsage() : undefined;
-		const state = projectSessionState(model, thinkingLevel, usage, readSessionCost(ctx));
+		const state = projectSessionState(model, thinkingLevel, usage, readSessionCost(ctx), this.oddPhase(ctx));
 		const canonical = JSON.stringify(state);
 		if (canonical === this.lastEmitted) return;
 		// Never open with an all-unavailable event: there is nothing to tell yet.

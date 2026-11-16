@@ -1263,7 +1263,7 @@ Follows an `apply_profile` answer whose `status` is `applied`, after the respons
 
 ### `session_state_changed`
 
-Carries the session's effective state — model, thinking level, context usage and cost — so a connected Desktop client never polls during a run. It is emitted only at the settle points pi itself reports (`turn_end`, `model_select`, `thinking_level_select`, `session_compact`, `session_tree`): each settle produces at most one event, carrying the full current projection, and only when at least one field differs from the last delivered one. Traffic inside a turn is never sampled, there is no timer, no read method, and no polling contract — a client that reconnects or detects a sequence gap re-reads nothing and simply waits for the next settle point, which re-delivers the whole state.
+Carries the session's effective state — model, thinking level, context usage, cost and the ODD phase — so a connected Desktop client never polls during a run. It is emitted only at the settle points pi itself reports (`turn_end`, `model_select`, `thinking_level_select`, `session_compact`, `session_tree`): each settle produces at most one event, carrying the full current projection, and only when at least one field differs from the last delivered one. Traffic inside a turn is never sampled, there is no timer, no read method, and no polling contract — a client that reconnects or detects a sequence gap re-reads nothing and simply waits for the next settle point, which re-delivers the whole state.
 
 Availability is per field, and an unavailable value is omitted, never sent as `0` or any placeholder — a client must be able to tell "no value" from "zero":
 
@@ -1274,6 +1274,7 @@ Availability is per field, and an unavailable value is omitted, never sent as `0
 | `context.tokens`, `context.percent` | pi's own `ctx.getContextUsage()` | pi reports `null` (for example right after compaction, before the next response) |
 | `context.contextWindow` | `ctx.getContextUsage().contextWindow`, falling back to `ctx.model.contextWindow` exactly as the footer reads it | neither owner provides one |
 | `cost` | `readSessionCost` in `lib/session-cost.ts`, the single owner of the session cost sum | the host exposes no session entries to sum |
+| `oddPhase` | `oddPhaseRegistry.get(sessionId)` in `lib/odd-phase.ts`, the process-wide registry the shell's own working label reads | the registry holds no phase for this session, which is how the owner's clear arrives: a client drops its label by omission |
 
 `model` and `thinkingLevel` are the effective values the session is running, never the ones requested: a change or restore is read back through the same accessors the footer renders, so the event always names what the session would actually use. A legitimate `0` from an owner (a fresh context reporting zero tokens or zero percent) is kept — the rule omits unavailability, not zero. That includes `cost`: a session that has not spent anything yet reports the owner's own `0`, because "nothing spent" and "cannot be measured" are different facts. `cost` reads the one owner the footer reads (`lib/session-cost.ts`); a host that exposes no session entries omits the field rather than claiming a zero, and this contract still forbids a second counter.
 
@@ -1287,7 +1288,8 @@ Availability is per field, and an unavailable value is omitted, never sent as `0
     "model": "anthropic/claude-opus-4-6",
     "thinkingLevel": "high",
     "context": { "tokens": 48211, "percent": 17.7, "contextWindow": 272000 },
-    "cost": 0.0375
+    "cost": 0.0375,
+    "oddPhase": "implementing"
   }
 }
 ```
@@ -1406,6 +1408,7 @@ The event rides the same router sequencer as every other event: `seq` keeps the 
 - **Push only, no polling contract.** The event fires at pi's own settle points and nowhere else: no timer, no sampler, no read method. A client that reconnects waits for the next settle point, which re-delivers the whole state.
 - **One event per settled change.** A settle that leaves the projection unchanged emits nothing, and the canonical field order is fixed so change detection never reports a phantom difference.
 - **Availability is per field, including cost.** `cost` reads the single owner in `lib/session-cost.ts`; a host that exposes no session entries omits the field rather than reporting `0`, while a session that has genuinely spent nothing keeps the owner's own `0`. No second counter exists anywhere in this repository, and the footer renders the same value through the same owner.
+- **The ODD phase is a read, not a second tracker.** `oddPhase` is `oddPhaseRegistry.get(sessionId)` from `lib/odd-phase.ts` — the same process-wide registry the shell's working label reads, and the same one `gentle_odd_phase` and tool-activity inference report into. This slice adds no phase inference, no phase store and no new event: it projects the value the owner already holds at the settle point. The token travels (`implementing`), never the display label (`implementing…`), so a client renders its own wording. Clearing is omission — the shell clears at turn and session boundaries, and the next settle then publishes a state without the field rather than a stale phase.
 
 ## Verification
 
