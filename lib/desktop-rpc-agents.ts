@@ -13,7 +13,7 @@
 
 import type { ChildResponseObservation, ChildTokenMeasurement, TaskRecord, TaskStatus, TaskUsage } from "./agents-protocol.ts";
 import { FINISHED_STATUSES, TASK_STATUS } from "./agents-protocol.ts";
-import { DESKTOP_UNAVAILABLE_REASON } from "./desktop-rpc.ts";
+import type { DesktopUnavailableReason } from "./desktop-rpc.ts";
 
 export const DESKTOP_AGENTS_METHODS = ["list_subagents", "cancel_subagent"] as const;
 export const DESKTOP_AGENTS_EVENT = "agents_update";
@@ -153,23 +153,23 @@ export interface DesktopAgentsService {
 }
 
 export const INVALID_AGENTS_PARAMS = { code: "invalid_request", message: "Invalid subagents parameters" } as const;
-export const AGENTS_UNAVAILABLE = {
-	code: "agents_unavailable",
-	message: "Subagents owner unavailable for this session",
-	reason: DESKTOP_UNAVAILABLE_REASON.OWNER_UNAVAILABLE,
-} as const;
-/** Same answer before any owner work was possible: no session context is bound. */
-export const AGENTS_NO_HOST = {
-	code: "agents_unavailable",
-	message: "Subagents owner unavailable for this session",
-	reason: DESKTOP_UNAVAILABLE_REASON.NO_HOST,
-} as const;
-/** The owner answered, but a projected entry the bridge refuses; no projection is invented. */
-export const AGENTS_ANSWER_REJECTED = {
-	code: "agents_unavailable",
-	message: "Subagents owner unavailable for this session",
-	reason: DESKTOP_UNAVAILABLE_REASON.OWNER_ANSWER_REJECTED,
-} as const;
+
+const AGENTS_UNAVAILABLE_ERROR = { code: "agents_unavailable", message: "Subagents owner unavailable for this session" } as const;
+
+/** One `agents_unavailable` answer: the fixed code and message plus the closed reason. */
+export type DesktopAgentsUnavailable = typeof AGENTS_UNAVAILABLE_ERROR & { reason: DesktopUnavailableReason };
+
+/**
+ * The only `agents_unavailable` error this slice answers, tagged with why it was
+ * unavailable. `code` and `message` live in exactly one place, so no exported
+ * name can be read as a second error code: the closed `reason` is the only thing
+ * that varies — `no_host` (no bound session context), `owner_unavailable` (no
+ * usable owner answer) or `owner_answer_rejected` (the owner answered a shape
+ * the projection refuses).
+ */
+export function agentsUnavailable(reason: DesktopUnavailableReason): DesktopAgentsUnavailable {
+	return { ...AGENTS_UNAVAILABLE_ERROR, reason };
+}
 export const AGENT_NOT_FOUND = { code: "not_found", message: "No subagent with that id in this session" } as const;
 
 /** Freeform name/model bounds; `lastStep` is closed, never truncated raw text. */

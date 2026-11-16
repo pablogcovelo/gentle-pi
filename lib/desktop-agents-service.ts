@@ -10,11 +10,9 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	AGENT_NOT_FOUND,
-	AGENTS_ANSWER_REJECTED,
-	AGENTS_NO_HOST,
-	AGENTS_UNAVAILABLE,
 	DESKTOP_AGENTS_EVENT,
 	DESKTOP_AGENTS_SERVICE_CHANNEL,
+	agentsUnavailable,
 	isDesktopAgentsServiceShape,
 	parseCancelSubagentParams,
 	parseDesktopAgentEntry,
@@ -23,7 +21,17 @@ import {
 	type DesktopAgentsOwnerRead,
 	type DesktopAgentsService,
 } from "./desktop-rpc-agents.ts";
-import { parseTruncatedFlag, type DesktopRpcOutcome } from "./desktop-rpc.ts";
+import { DESKTOP_UNAVAILABLE_REASON, parseTruncatedFlag, type DesktopRpcOutcome } from "./desktop-rpc.ts";
+
+/**
+ * The three outcomes of one owner read: a usable projection, an answer the
+ * projection refused, or no usable answer at all. The list answer maps them to
+ * its closed reasons instead of collapsing them into one unavailable code.
+ */
+type DesktopAgentsReadAttempt =
+	| { kind: "ok"; read: DesktopAgentsOwnerRead }
+	| { kind: "rejected" }
+	| { kind: "absent" };
 
 const DISCOVERY_TIMEOUT_MS = 100;
 const DEFAULT_COALESCE_MS = 150;
@@ -157,7 +165,7 @@ export class DesktopAgentsBridge {
 	async handle(method: string, params: Record<string, unknown>): Promise<DesktopRpcOutcome | undefined> {
 		if (method !== "list_subagents" && method !== "cancel_subagent") return undefined;
 		const host = this.host;
-		if (!host) return { ok: false, error: AGENTS_NO_HOST };
+		if (!host) return { ok: false, error: agentsUnavailable(DESKTOP_UNAVAILABLE_REASON.NO_HOST) };
 		// Parse before discovery: a malformed request must never trigger owner work.
 		if (method === "list_subagents") {
 			const parsed = parseListSubagentsParams(params);
@@ -168,7 +176,7 @@ export class DesktopAgentsBridge {
 		}
 		const generation = this.generation;
 		const service = await this.owner(host);
-		if (generation !== this.generation || !service) return { ok: false, error: AGENTS_UNAVAILABLE };
+		if (generation !== this.generation || !service) return { ok: false, error: agentsUnavailable(DESKTOP_UNAVAILABLE_REASON.OWNER_UNAVAILABLE) };
 		return method === "list_subagents" ? this.list(service) : this.cancel(service, params);
 	}
 
@@ -232,8 +240,9 @@ export class DesktopAgentsBridge {
 		const host = this.host;
 		const emit = this.emit;
 		if (!host || !emit) return;
-		const read = this.readOwner(service);
-		if (!read) return;
+		const attempt = this.readOwner(service);
+		if (attempt.kind !== "ok") return;
+		const read = attempt.read;
 		const key = listKey(read.agents, read.truncated);
 		if (key === this.lastEmittedAgents) return;
 		this.lastEmittedAgents = key;
@@ -244,21 +253,27 @@ export class DesktopAgentsBridge {
 		return host.sessionManager?.getSessionId?.() ?? "";
 	}
 
-	private readOwner(service: DesktopAgentsService): DesktopAgentsOwnerRead | undefined {
+	/**
+	 * One owner read attempt, classified so an answer that was refused is
+	 * distinguishable from an owner that answered nothing: `rejected` means the
+	 * owner spoke and the projection refused its shape, `absent` means there was
+	 * no usable answer at all (no responder, or a read that threw).
+	 */
+	private readOwner(service: DesktopAgentsService): DesktopAgentsReadAttempt {
 		try {
 			const read = service.read();
-			if (!read || typeof read !== "object") return undefined;
+			if (!read || typeof read !== "object") return { kind: "absent" };
 			const agents = this.parseAgents(read.agents);
-			if (agents === undefined) return undefined;
+			if (agents === undefined) return { kind: "rejected" };
 			// A responder that cannot say whether it clipped is unusable: publishing
 			// its list would claim completeness the owner never asserted.
 			const truncated = parseTruncatedFlag(read.truncated);
-			if (truncated === undefined) return undefined;
-			return { sessionId: read.sessionId, agents, truncated };
+			if (truncated === undefined) return { kind: "rejected" };
+			return { kind: "ok", read: { sessionId: read.sessionId, agents, truncated } };
 		} catch {
 			// Raw owner failures carry prompt text and path detail; none of it
 			// crosses the contract. An unreadable owner is treated as absent.
-			return undefined;
+			return { kind: "absent" };
 		}
 	}
 
@@ -274,9 +289,16 @@ export class DesktopAgentsBridge {
 	}
 
 	private list(service: DesktopAgentsService): DesktopRpcOutcome {
-		const read = this.readOwner(service);
-		if (!read) return { ok: false, error: AGENTS_UNAVAILABLE };
-		return { ok: true, data: { agents: read.agents, truncated: read.truncated } };
+		const attempt = this.readOwner(service);
+		if (attempt.kind === "ok") return { ok: true, data: { agents: attempt.read.agents, truncated: attempt.read.truncated } };
+		// An owner that answered a shape the projection refuses is a different
+		// fact from an absent owner, and the closed reason vocabulary says so.
+		return {
+			ok: false,
+			error: agentsUnavailable(attempt.kind === "rejected"
+				? DESKTOP_UNAVAILABLE_REASON.OWNER_ANSWER_REJECTED
+				: DESKTOP_UNAVAILABLE_REASON.OWNER_UNAVAILABLE),
+		};
 	}
 
 	private cancel(service: DesktopAgentsService, params: Record<string, unknown>): DesktopRpcOutcome {
@@ -288,27 +310,29 @@ export class DesktopAgentsBridge {
 			outcome = service.cancel(parsed.id);
 		} catch {
 			// Raw owner failures carry prompt text and path detail; none of it crosses.
-			return { ok: false, error: AGENTS_UNAVAILABLE };
+			return { ok: false, error: agentsUnavailable(DESKTOP_UNAVAILABLE_REASON.OWNER_UNAVAILABLE) };
 		}
 		if (!outcome || outcome.kind === "not_found") return { ok: false, error: AGENT_NOT_FOUND };
 		// The owner's projected entry crosses the event bus: re-validate it.
 		const agent = parseDesktopAgentEntry(outcome.agent);
-		if (agent === undefined) return { ok: false, error: AGENTS_ANSWER_REJECTED };
+		if (agent === undefined) return { ok: false, error: agentsUnavailable(DESKTOP_UNAVAILABLE_REASON.OWNER_ANSWER_REJECTED) };
 		const data = { agent };
 		// A no-op (already-terminal) cancellation changes nothing: answer the
 		// terminal state and emit no event.
 		if (outcome.changed !== true) return { ok: true, data };
 		// Response-before-event: carry the event so the router publishes the
 		// response line first, then one `agents_update` with the post-action list.
-		const read = this.readOwner(service);
-		const agents = read ? read.agents : [agent];
-		this.lastEmittedAgents = listKey(agents, read?.truncated === true);
+		const attempt = this.readOwner(service);
+		const refreshed = attempt.kind === "ok" ? attempt.read : undefined;
+		const agents = refreshed ? refreshed.agents : [agent];
+		const truncated = refreshed ? refreshed.truncated : false;
+		this.lastEmittedAgents = listKey(agents, truncated);
 		return {
 			ok: true,
 			data,
 			event: {
 				name: DESKTOP_AGENTS_EVENT,
-				data: { agents, truncated: read?.truncated === true } satisfies DesktopAgentsUpdateEvent,
+				data: { agents, truncated } satisfies DesktopAgentsUpdateEvent,
 			},
 		};
 	}

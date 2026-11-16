@@ -12,7 +12,6 @@ import { AgentRunner } from "../lib/agents-runner.ts";
 import { fakeChild } from "./agents-fake-child.ts";
 import {
 	AGENT_NOT_FOUND,
-	AGENTS_UNAVAILABLE,
 	DESKTOP_AGENTS_EVENT,
 	DESKTOP_AGENTS_EVENTS,
 	DESKTOP_AGENTS_LIST_LIMIT,
@@ -21,6 +20,7 @@ import {
 	DESKTOP_AGENTS_SERVICE_SCHEMA,
 	INVALID_AGENTS_PARAMS,
 	accumulateTaskUsage,
+	agentsUnavailable,
 	isDesktopAgentsServiceShape,
 	parseCancelSubagentParams,
 	parseDesktopAgentEntry,
@@ -33,7 +33,7 @@ import {
 	type DesktopAgentsService,
 } from "../lib/desktop-rpc-agents.ts";
 import { DesktopAgentsBridge, discoverDesktopAgentsService } from "../lib/desktop-agents-service.ts";
-import { DESKTOP_RPC_SCHEMA, DesktopRpcRouter, type DesktopRpcDomain } from "../lib/desktop-rpc.ts";
+import { DESKTOP_RPC_SCHEMA, DESKTOP_UNAVAILABLE_REASON, DesktopRpcRouter, type DesktopRpcDomain } from "../lib/desktop-rpc.ts";
 import { INTERACTIVE_HOST_ENV } from "../lib/rpc-host.ts";
 
 // ---- Fixtures: real TaskStore + a fake runner ----
@@ -406,7 +406,7 @@ test("a throwing or malformed owner never leaks raw prompt text or paths", async
 	const read = await bridge.handle("list_subagents", {});
 	assert.equal(read.ok, false);
 	assert.equal(JSON.stringify(read).includes("secret prompt"), false);
-	assert.deepEqual(read.error, AGENTS_UNAVAILABLE);
+	assert.deepEqual(read.error, agentsUnavailable(DESKTOP_UNAVAILABLE_REASON.OWNER_UNAVAILABLE));
 	const cancelled = await bridge.handle("cancel_subagent", { id: "t1" });
 	assert.equal(cancelled.ok, false);
 	assert.equal(JSON.stringify(cancelled).includes("secret prompt"), false);
@@ -529,6 +529,26 @@ test("a truncated-only flip is a real change and is never suppressed", async () 
 	assert.equal(events[1]!.data.truncated, true, "the client is told the list is clipped");
 });
 
+test("an owner that answers a malformed list says the answer was rejected", async () => {
+	// SAFETY: the fake answers a list the projection refuses, which the published
+	// adapter shape forbids; the cast models the untrusted payload the bridge must
+	// classify rather than a supported responder.
+	const malformed = {
+		schema: DESKTOP_AGENTS_SERVICE_SCHEMA,
+		read: () => ({ sessionId: "session-a", agents: [{ id: "t" }], truncated: false }),
+		cancel: () => ({ kind: "not_found" as const }),
+		observe: () => () => {},
+		dispose: () => {},
+	} as unknown as DesktopAgentsService;
+	const bridge = new DesktopAgentsBridge({} as ExtensionAPI, { discover: async () => malformed });
+	bridge.attach({ sessionManager: { getSessionId: () => "session-a" } } as unknown as ExtensionContext);
+	assert.deepEqual(
+		await bridge.handle("list_subagents", {}),
+		{ ok: false, error: agentsUnavailable(DESKTOP_UNAVAILABLE_REASON.OWNER_ANSWER_REJECTED) },
+		"an owner that answered a refused shape is not the same as an absent owner",
+	);
+});
+
 test("an owner that cannot say whether it clipped is unavailable, never complete", async () => {
 	// SAFETY: the fake deliberately answers the older v1 read shape (no
 	// `truncated`), which the published interface forbids; the cast models the
@@ -544,7 +564,11 @@ test("an owner that cannot say whether it clipped is unavailable, never complete
 	bridge.attach({ sessionManager: { getSessionId: () => "session-a" } } as unknown as ExtensionContext);
 	const outcome = await bridge.handle("list_subagents", {});
 	assert.equal(outcome.ok, false, "a list without a completeness fact is not published");
-	assert.deepEqual(await bridge.handle("list_subagents", {}), { ok: false, error: AGENTS_UNAVAILABLE });
+	assert.deepEqual(
+		outcome,
+		{ ok: false, error: agentsUnavailable(DESKTOP_UNAVAILABLE_REASON.OWNER_ANSWER_REJECTED) },
+		"the owner answered a shape the projection refuses, so the reason says so",
+	);
 });
 
 test("agent-driven transitions become one coalesced agents_update filtered by active session", async () => {
@@ -614,7 +638,7 @@ test("session reset disconnects observers and drops stale async outcomes", async
 	releaseService(service);
 	const outcome = await pending;
 	assert.equal(outcome.ok, false);
-	assert.deepEqual(outcome.error, AGENTS_UNAVAILABLE);
+	assert.deepEqual(outcome.error, agentsUnavailable(DESKTOP_UNAVAILABLE_REASON.OWNER_UNAVAILABLE));
 });
 
 test("a late discovery after reset is disposed and never cached for the next session", async () => {
@@ -754,7 +778,7 @@ test("list_subagents answers agents_unavailable through the transport without an
 	);
 	const response = JSON.parse(app.widgets[0]!.lines[0]!);
 	assert.equal(response.ok, false);
-	assert.deepEqual(response.error, AGENTS_UNAVAILABLE);
+	assert.deepEqual(response.error, agentsUnavailable(DESKTOP_UNAVAILABLE_REASON.OWNER_UNAVAILABLE));
 });
 
 // ---- Real owner: the gentle-agents agents seam ----

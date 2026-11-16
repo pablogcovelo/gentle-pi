@@ -41,7 +41,17 @@ function publishedEntry(entry: ToolVocabularyEntry): Record<string, unknown> {
 	};
 }
 
-/** One `tool_vocabulary` request. Without `tool` the whole vocabulary is published; with it, one classification — an unknown name answers `matched: false`, never an invented family. */
+/**
+ * One `tool_vocabulary` request. Without `tool` the whole vocabulary is
+ * published; with it, one classification — an unknown name answers
+ * `matched: false`, never an invented family.
+ *
+ * `vocabulary` is a **test seam, not a client-facing option**: only the full
+ * read consumes it, and the single-tool branch always classifies against the
+ * module's own table (`classifyTool`), because no client can swap the native
+ * classification over the wire. It exists so the list bound can be exercised
+ * without publishing a second table.
+ */
 export function toolVocabularyOutcome(params: Record<string, unknown>, vocabulary: readonly ToolVocabularyEntry[] = TOOL_VOCABULARY): DesktopRpcOutcome {
 	if (invalidToolsParams(params)) return { ok: false, error: INVALID_TOOLS_PARAMS };
 	const tool = params.tool;

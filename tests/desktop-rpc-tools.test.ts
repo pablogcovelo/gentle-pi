@@ -64,6 +64,16 @@ test("a vocabulary larger than the bound is clipped and labeled", () => {
 	assert.deepEqual(data.categories, ["read", "edit", "write", "search", "list", "bash", "delegation", "rdd"], "the category set is unchanged");
 });
 
+test("the vocabulary argument is a full-read seam, so one tool still classifies from the owner table", () => {
+	// The injected table only feeds the full read. A single-tool request keeps
+	// classifying against lib/tool-vocabulary.ts — the behaviour the JSDoc pins.
+	const custom = [{ category: "read" as const, glyph: "≡", tools: ["only-here"] }];
+	assert.deepEqual(toolVocabularyOutcome({ tool: "grep" }, custom), {
+		ok: true,
+		data: { tool: "grep", matched: true, category: "search", glyph: "⌕" },
+	});
+});
+
 test("a single tool classifies by exact name and by the review pattern", () => {
 	assert.deepEqual(toolVocabularyOutcome({ tool: "grep" }), {
 		ok: true, data: { tool: "grep", matched: true, category: "search", glyph: "⌕" },
