@@ -22,7 +22,7 @@ import { join, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLocalBashOperations, keyHint, SettingsManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createJobRegistry, isStandaloneSleep, type JobExecOperations, type JobRecord } from "../lib/background-jobs.ts";
-import { JOB_GLYPH, JOB_NOTICE_TYPE, jobDetails, jobNoticeText, monitorEventsText, monitorStoppedText, registerBackgroundJobTools, type BackgroundJobsChange } from "../lib/background-jobs-tools.ts";
+import { JOB_GLYPH, JOB_NOTICE_TYPE, jobDetails, jobNoticeText, monitorEventsText, monitorStoppedText, registerBackgroundJobTools } from "../lib/background-jobs-tools.ts";
 import { createMonitorController, mergeMonitorBatches, type MonitorNotice } from "../lib/background-monitor.ts";
 import { DESKTOP_JOBS_SERVICE_CHANNEL, DESKTOP_JOBS_SERVICE_SCHEMA, projectDesktopJob, selectDesktopJobs, type DesktopJobsCancelOutcome, type DesktopJobsOwnerRead, type DesktopJobsService } from "../lib/desktop-rpc-jobs.ts";
 import { DESKTOP_AGENTS_SERVICE_CHANNEL, DESKTOP_AGENTS_SERVICE_SCHEMA, accumulateTaskUsage, projectDesktopAgent, selectDesktopAgents, type DesktopAgentsCancelOutcome, type DesktopAgentsOwnerRead, type DesktopAgentsService } from "../lib/desktop-rpc-agents.ts";
@@ -731,6 +731,9 @@ export async function answerThroughUi(ui: ExtensionContext["ui"] | undefined, as
 }
 
 export default function gentleAgents(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env, overrides: Partial<AgentsDeps> = {}): void {
+	// SAFETY: `process.send` exists only in a child that owns an IPC channel, which
+	// is exactly the case the ternary keeps; the cast only narrows Node's `Process`
+	// to the minimal endpoint shape `ownedChildIpc` reads, adding no member.
 	const childIpc = ownedChildIpc(env, overrides.childIpc ?? (process.send ? process as unknown as IpcEndpoint : undefined));
 	if (env.GENTLE_PI_AGENTS_CHILD === "1") {
 		// A stale managed-SDD child must never inherit unrestricted ordinary tools.
@@ -994,6 +997,9 @@ export default function gentleAgents(pi: ExtensionAPI, env: NodeJS.ProcessEnv = 
 	// its session. Before the first session_start there is nothing to scope by.
 	const activeSessionId = (): string | undefined => (sessions === undefined ? undefined : sessions.getSessionId() ?? "");
 	// Pi 0.86.1 adds this event; the package's pinned 0.85.1 types predate it.
+	// SAFETY: the cast adds only the newer event surface to that pinned type, and
+	// installing it is a subscription — a host that never emits the event simply
+	// never warms, so no member this code reads is invented.
 	installBackgroundCacheWarming(pi as unknown as Parameters<typeof installBackgroundCacheWarming>[0], () => ({
 		sessionId: activeSessionId(),
 		ownedTaskIds,
@@ -2018,7 +2024,7 @@ export default function gentleAgents(pi: ExtensionAPI, env: NodeJS.ProcessEnv = 
 		},
 	});
 
-	registerBackgroundJobTools(pi, { registry: jobs, monitors, sessionId: (ctx) => ctx.sessionManager.getSessionId() ?? "", now: deps.now, onChange: (change: BackgroundJobsChange) => { refreshJobStatus(); requestRender(); } });
+	registerBackgroundJobTools(pi, { registry: jobs, monitors, sessionId: (ctx) => ctx.sessionManager.getSessionId() ?? "", now: deps.now, onChange: () => { refreshJobStatus(); requestRender(); } });
 
 	pi.registerMessageRenderer(AGENTS_MESSAGE_TYPE, (message, options, theme) => {
 		const details = (message.details as { gentleAgents?: { taskId?: unknown; agent?: unknown } } | undefined)?.gentleAgents;
@@ -2589,6 +2595,9 @@ export default function gentleAgents(pi: ExtensionAPI, env: NodeJS.ProcessEnv = 
 		}
 		if (signal?.aborted) throw new Error("Subagent launch aborted before queueing.");
 		mkdirSync(sessionDir, { recursive: true });
+		// SAFETY: `ReviewSessionManager` is the structural subset of pi's session
+		// manager this review path reads; every member it names exists on the live
+		// object, and the cast only drops members no call here uses.
 		const parentSessionManager = ctx.sessionManager as unknown as ReviewSessionManager;
 		const parentSessionId = ctx.sessionManager.getSessionId() ?? "";
 		const parentWorktreeRoot = ctx.sessionManager.getCwd();
