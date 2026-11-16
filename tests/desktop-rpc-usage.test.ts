@@ -232,12 +232,19 @@ test("invalid params are typed rejections without events", async () => {
 	assert.equal(events.length, 0);
 });
 
-test("no owner answers usage_unavailable without inventing data", async () => {
+test("no owner answers usage_unavailable with reason owner_unavailable and no invented data", async () => {
 	const bridge = new DesktopUsageBridge({} as ExtensionAPI, { discover: async () => undefined, now: () => NOW });
 	bridge.attach({} as ExtensionContext);
 	const outcome = await bridge.handle("get_subscription_usage", {});
 	assert.equal(outcome.ok, false);
-	assert.deepEqual(outcome.error, { code: "usage_unavailable", message: "Usage owner unavailable for this session" });
+	assert.deepEqual(outcome.error, { code: "usage_unavailable", message: "Usage owner unavailable for this session", reason: "owner_unavailable" });
+});
+
+test("no bound session answers usage_unavailable with reason no_host", async () => {
+	const bridge = new DesktopUsageBridge({} as ExtensionAPI, { discover: async () => undefined, now: () => NOW });
+	const outcome = await bridge.handle("get_subscription_usage", {});
+	assert.equal(outcome.ok, false);
+	assert.deepEqual(outcome.error, { code: "usage_unavailable", message: "Usage owner unavailable for this session", reason: "no_host" });
 });
 
 // ---- Bridge: refresh ----
@@ -459,7 +466,7 @@ test("session reset disconnects observers and drops stale async outcomes", async
 	release!();
 	const outcome = await pending;
 	assert.equal(outcome.ok, false, "a stale refresh resolves to a safe typed answer");
-	assert.deepEqual(outcome.error, { code: "usage_unavailable", message: "Usage owner unavailable for this session" });
+	assert.deepEqual(outcome.error, { code: "usage_unavailable", message: "Usage owner unavailable for this session", reason: "owner_unavailable" });
 	assert.equal(events.length, 0);
 });
 
@@ -697,5 +704,5 @@ test("get_subscription_usage answers usage_unavailable through the transport wit
 	);
 	const response = JSON.parse(widgets[0].lines[0]);
 	assert.equal(response.ok, false);
-	assert.deepEqual(response.error, { code: "usage_unavailable", message: "Usage owner unavailable for this session" });
+	assert.deepEqual(response.error, { code: "usage_unavailable", message: "Usage owner unavailable for this session", reason: "owner_unavailable" });
 });

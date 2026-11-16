@@ -10,6 +10,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	AGENT_NOT_FOUND,
+	AGENTS_ANSWER_REJECTED,
+	AGENTS_NO_HOST,
 	AGENTS_UNAVAILABLE,
 	DESKTOP_AGENTS_EVENT,
 	DESKTOP_AGENTS_SERVICE_CHANNEL,
@@ -145,7 +147,7 @@ export class DesktopAgentsBridge {
 	async handle(method: string, params: Record<string, unknown>): Promise<DesktopRpcOutcome | undefined> {
 		if (method !== "list_subagents" && method !== "cancel_subagent") return undefined;
 		const host = this.host;
-		if (!host) return { ok: false, error: AGENTS_UNAVAILABLE };
+		if (!host) return { ok: false, error: AGENTS_NO_HOST };
 		// Parse before discovery: a malformed request must never trigger owner work.
 		if (method === "list_subagents") {
 			const parsed = parseListSubagentsParams(params);
@@ -277,7 +279,7 @@ export class DesktopAgentsBridge {
 		if (!outcome || outcome.kind === "not_found") return { ok: false, error: AGENT_NOT_FOUND };
 		// The owner's projected entry crosses the event bus: re-validate it.
 		const agent = parseDesktopAgentEntry(outcome.agent);
-		if (agent === undefined) return { ok: false, error: AGENTS_UNAVAILABLE };
+		if (agent === undefined) return { ok: false, error: AGENTS_ANSWER_REJECTED };
 		const data = { agent };
 		// A no-op (already-terminal) cancellation changes nothing: answer the
 		// terminal state and emit no event.

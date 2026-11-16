@@ -365,12 +365,33 @@ test("invalid params are rejected before any owner discovery", async () => {
 	assert.equal(discoveries, 0, "invalid params never reach discovery");
 });
 
-test("no owner answers agents_unavailable rather than inventing an empty list", async () => {
+test("no owner answers agents_unavailable with reason owner_unavailable rather than inventing an empty list", async () => {
 	const bridge = new DesktopAgentsBridge({} as ExtensionAPI, { discover: async () => undefined });
 	bridge.attach({ sessionManager: { getSessionId: () => "session-a" } } as unknown as ExtensionContext);
 	const outcome = await bridge.handle("list_subagents", {});
 	assert.equal(outcome.ok, false);
-	assert.deepEqual(outcome.error, AGENTS_UNAVAILABLE);
+	assert.deepEqual(outcome.error, { code: "agents_unavailable", message: "Subagents owner unavailable for this session", reason: "owner_unavailable" });
+});
+
+test("no bound session answers agents_unavailable with reason no_host", async () => {
+	const bridge = new DesktopAgentsBridge({} as ExtensionAPI, { discover: async () => undefined });
+	const outcome = await bridge.handle("list_subagents", {});
+	assert.equal(outcome.ok, false);
+	assert.deepEqual(outcome.error, { code: "agents_unavailable", message: "Subagents owner unavailable for this session", reason: "no_host" });
+});
+
+test("a cancel whose owner-projected entry is malformed answers owner_answer_rejected", async () => {
+	const malformed: DesktopAgentsService = {
+		schema: DESKTOP_AGENTS_SERVICE_SCHEMA,
+		read: () => ({ sessionId: "session-a", agents: [], truncated: false }),
+		cancel: () => ({ kind: "ok", agent: { id: "t1", status: TASK_STATUS.RUNNING, usage: { total: 0, cost: 0 } } as unknown as DesktopAgentEntry, requested: true, changed: false }),
+		observe: () => () => {},
+		dispose: () => {},
+	};
+	const { bridge } = makeBridge(malformed);
+	const outcome = await bridge.handle("cancel_subagent", { id: "t1" });
+	assert.equal(outcome.ok, false);
+	assert.deepEqual(outcome.error, { code: "agents_unavailable", message: "Subagents owner unavailable for this session", reason: "owner_answer_rejected" });
 });
 
 test("a throwing or malformed owner never leaks raw prompt text or paths", async () => {

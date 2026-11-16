@@ -13,7 +13,7 @@
 
 import { isAbsolute } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { DesktopRpcOutcome } from "./desktop-rpc.ts";
+import { DESKTOP_UNAVAILABLE_REASON, type DesktopRpcOutcome } from "./desktop-rpc.ts";
 import { sessionChangeRoots } from "./session-changes.ts";
 import {
 	CHANGE_STATUS,
@@ -43,7 +43,11 @@ const BRANCH_FIELD_LIMIT = 200;
 
 export const INVALID_WORKTREE_PARAMS = { code: "invalid_request", message: "Invalid get_worktree_changes parameters" } as const;
 export const WORKTREE_ROOT_UNKNOWN = { code: "unknown_root", message: "Not a worktree root of this session" } as const;
-export const WORKTREE_UNAVAILABLE = { code: "worktree_unavailable", message: "Worktree state unavailable for this session" } as const;
+export const WORKTREE_UNAVAILABLE = {
+	code: "worktree_unavailable",
+	message: "Worktree state unavailable for this session",
+	reason: DESKTOP_UNAVAILABLE_REASON.NO_HOST,
+} as const;
 /**
  * Untracked files never appear in `diff --numstat` (`lib/shell-changes.ts:118`
  * answers `added: 0` for them), and only the shell's private line counter

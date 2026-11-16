@@ -6,13 +6,27 @@ const MAX_REQUEST_BYTES = 64 * 1024;
 const DEFAULT_METHODS = ["capabilities", "get_snapshot"] as const;
 const INTERNAL_ERROR = { code: "internal_error", message: "Desktop RPC operation failed" } as const;
 
+/**
+ * Why a read answered `<domain>_unavailable`: `no_host` means no Desktop
+ * command has bound a session context yet, `owner_unavailable` means the
+ * owning extension answered nothing usable, and `owner_answer_rejected` means
+ * it answered a shape the projection refused. A closed token set, so a client
+ * never parses English to tell a missing channel from an empty one.
+ */
+export const DESKTOP_UNAVAILABLE_REASON = {
+	NO_HOST: "no_host",
+	OWNER_UNAVAILABLE: "owner_unavailable",
+	OWNER_ANSWER_REJECTED: "owner_answer_rejected",
+} as const;
+export type DesktopUnavailableReason = (typeof DESKTOP_UNAVAILABLE_REASON)[keyof typeof DESKTOP_UNAVAILABLE_REASON];
+
 export type DesktopRpcPublish = (line: string) => void;
 export type DesktopRpcState = Record<string, unknown>;
 
 /** One domain outcome: data for a response plus at most one event published after it. */
 export type DesktopRpcOutcome =
 	| { ok: true; data: DesktopRpcState; event?: { name: string; data: DesktopRpcState } }
-	| { ok: false; error: { code: string; message: string } };
+	| { ok: false; error: { code: string; message: string; reason?: DesktopUnavailableReason } };
 
 /** Domain methods are supplied by each slice; `undefined` means "not implemented". */
 export type DesktopRpcDomain = (
@@ -32,13 +46,13 @@ type DecodedRequest = {
 	requestId: string | null;
 };
 
-function errorResponse(requestId: string | null, code: string, message: string) {
+function errorResponse(requestId: string | null, code: string, message: string, reason?: string) {
 	return {
 		schema: DESKTOP_RPC_SCHEMA,
 		kind: "response",
 		requestId,
 		ok: false,
-		error: { code, message },
+		error: reason === undefined ? { code, message } : { code, message, reason },
 	};
 }
 
@@ -201,7 +215,7 @@ export class DesktopRpcRouter {
 			return;
 		}
 		if (outcome.ok === false) {
-			publish(JSON.stringify(errorResponse(requestId, outcome.error.code, outcome.error.message)));
+			publish(JSON.stringify(errorResponse(requestId, outcome.error.code, outcome.error.message, outcome.error.reason)));
 			return;
 		}
 		let line: string;

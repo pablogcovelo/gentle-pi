@@ -9,7 +9,6 @@ import {
 	INVALID_WORKTREE_PARAMS,
 	UNMEASURED_COUNTS,
 	WORKTREE_ROOT_UNKNOWN,
-	WORKTREE_UNAVAILABLE,
 	worktreeChangesOutcome,
 } from "../lib/desktop-rpc-worktree.ts";
 import { DESKTOP_RPC_SCHEMA, DesktopRpcRouter } from "../lib/desktop-rpc.ts";
@@ -39,7 +38,7 @@ const STATUS = "status --porcelain=v1 --untracked-files=all -z";
 const DIFF = "diff --numstat HEAD";
 
 const worktreeList = (root: string, branch?: string) =>
-	`${["worktree " + root, ...(branch ? ["branch refs/heads/" + branch] : []), ""].join("\0")}\0`;
+	`${[`worktree ${root}`, ...(branch ? [`branch refs/heads/${branch}`] : []), ""].join("\0")}\0`;
 
 const ROOT = "/repo";
 const happyHandlers = (): Record<string, FakeResponse> => ({
@@ -184,7 +183,10 @@ test("the bridge gates on the session's own roots and answers truthfully without
 	assert.deepEqual(await bridge.handle(DESKTOP_WORKTREE_METHOD, { root: "/nope" }), { ok: false, error: WORKTREE_ROOT_UNKNOWN });
 	assert.deepEqual(await bridge.handle(DESKTOP_WORKTREE_METHOD, { root: "/repo2" }), { ok: true, data: { root: "/repo2", model: emptyChanges(), truncated: false } });
 	bridge.reset();
-	assert.deepEqual(await bridge.handle(DESKTOP_WORKTREE_METHOD, { root: ROOT }), { ok: false, error: WORKTREE_UNAVAILABLE });
+	assert.deepEqual(await bridge.handle(DESKTOP_WORKTREE_METHOD, { root: ROOT }), {
+		ok: false,
+		error: { code: "worktree_unavailable", message: "Worktree state unavailable for this session", reason: "no_host" },
+	});
 });
 
 // ---- Capabilities: the per-domain exact array, like every other slice ----

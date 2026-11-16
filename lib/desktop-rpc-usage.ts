@@ -9,6 +9,7 @@
 // UsageSourceRegistry / refreshUsage / after_provider_response closures) stays
 // the single source of truth; this module is a projection, not a second store.
 
+import { DESKTOP_UNAVAILABLE_REASON } from "./desktop-rpc.ts";
 import {
 	CODEX_PROVIDER,
 	NAN_PROVIDER,
@@ -103,7 +104,17 @@ export interface DesktopUsageService {
 }
 
 export const INVALID_USAGE_PARAMS = { code: "invalid_request", message: "Invalid subscription usage parameters" } as const;
-export const USAGE_UNAVAILABLE = { code: "usage_unavailable", message: "Usage owner unavailable for this session" } as const;
+export const USAGE_UNAVAILABLE = {
+	code: "usage_unavailable",
+	message: "Usage owner unavailable for this session",
+	reason: DESKTOP_UNAVAILABLE_REASON.OWNER_UNAVAILABLE,
+} as const;
+/** Same answer before any owner work was possible: no session context is bound. */
+export const USAGE_NO_HOST = {
+	code: "usage_unavailable",
+	message: "Usage owner unavailable for this session",
+	reason: DESKTOP_UNAVAILABLE_REASON.NO_HOST,
+} as const;
 
 /**
  * The five statuses, derived only from facts the owner already holds. A

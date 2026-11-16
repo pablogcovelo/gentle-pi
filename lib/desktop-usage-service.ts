@@ -16,6 +16,7 @@ import {
 	parseDesktopUsageOwnerEntry,
 	parseUsageProviderParam,
 	projectUsageEntry,
+	USAGE_NO_HOST,
 	USAGE_UNAVAILABLE,
 	type DesktopUsageEntry,
 	type DesktopUsageOwnerEntry,
@@ -124,7 +125,7 @@ export class DesktopUsageBridge {
 	async handle(method: string, params: Record<string, unknown>): Promise<DesktopRpcOutcome | undefined> {
 		if (method !== "get_subscription_usage" && method !== "refresh_subscription_usage") return undefined;
 		const host = this.host;
-		if (!host) return { ok: false, error: USAGE_UNAVAILABLE };
+		if (!host) return { ok: false, error: USAGE_NO_HOST };
 		const generation = this.generation;
 		const service = await this.owner(host);
 		if (generation !== this.generation || !service) return { ok: false, error: USAGE_UNAVAILABLE };
