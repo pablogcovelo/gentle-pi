@@ -28,6 +28,17 @@ export type DesktopRpcOutcome =
 	| { ok: true; data: DesktopRpcState; event?: { name: string; data: DesktopRpcState } }
 	| { ok: false; error: { code: string; message: string; reason?: DesktopUnavailableReason } };
 
+/**
+ * Decodes the completeness fact an owner list answer carries. A responder that
+ * does not answer it (an older adapter, a truncated bus payload) yields
+ * `undefined`, which the bridges treat as an unusable answer rather than as
+ * `false`: publishing a capped list as complete is exactly the false
+ * completeness this fact exists to prevent.
+ */
+export function parseTruncatedFlag(value: unknown): boolean | undefined {
+	return value === true || value === false ? value : undefined;
+}
+
 /** Domain methods are supplied by each slice; `undefined` means "not implemented". */
 export type DesktopRpcDomain = (
 	method: string,

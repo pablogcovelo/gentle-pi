@@ -23,7 +23,7 @@ import {
 	type DesktopAgentsOwnerRead,
 	type DesktopAgentsService,
 } from "./desktop-rpc-agents.ts";
-import type { DesktopRpcOutcome } from "./desktop-rpc.ts";
+import { parseTruncatedFlag, type DesktopRpcOutcome } from "./desktop-rpc.ts";
 
 const DISCOVERY_TIMEOUT_MS = 100;
 const DEFAULT_COALESCE_MS = 150;
@@ -33,6 +33,16 @@ export interface DesktopAgentsUpdateEvent {
 	agents: DesktopAgentEntry[];
 	/** Whether the owner's bound dropped entries from `agents`. */
 	truncated: boolean;
+}
+
+/**
+ * Dedupe key for one list answer: the projected entries plus the completeness
+ * fact the event publishes. `truncated` belongs in the key because a burst can
+ * leave the visible window byte-identical while the clip state flips; keying
+ * on the entries alone would suppress that real change.
+ */
+function listKey(entries: readonly unknown[], truncated: boolean): string {
+	return JSON.stringify([entries, truncated]);
 }
 
 interface HostUiAgentsRequest { context: ExtensionContext; respond(service: DesktopAgentsService): void }
@@ -224,7 +234,7 @@ export class DesktopAgentsBridge {
 		if (!host || !emit) return;
 		const read = this.readOwner(service);
 		if (!read) return;
-		const key = JSON.stringify(read.agents);
+		const key = listKey(read.agents, read.truncated);
 		if (key === this.lastEmittedAgents) return;
 		this.lastEmittedAgents = key;
 		emit(DESKTOP_AGENTS_EVENT, { agents: read.agents, truncated: read.truncated } satisfies DesktopAgentsUpdateEvent);
@@ -240,7 +250,11 @@ export class DesktopAgentsBridge {
 			if (!read || typeof read !== "object") return undefined;
 			const agents = this.parseAgents(read.agents);
 			if (agents === undefined) return undefined;
-			return { sessionId: read.sessionId, agents, truncated: read.truncated === true };
+			// A responder that cannot say whether it clipped is unusable: publishing
+			// its list would claim completeness the owner never asserted.
+			const truncated = parseTruncatedFlag(read.truncated);
+			if (truncated === undefined) return undefined;
+			return { sessionId: read.sessionId, agents, truncated };
 		} catch {
 			// Raw owner failures carry prompt text and path detail; none of it
 			// crosses the contract. An unreadable owner is treated as absent.
@@ -288,7 +302,7 @@ export class DesktopAgentsBridge {
 		// response line first, then one `agents_update` with the post-action list.
 		const read = this.readOwner(service);
 		const agents = read ? read.agents : [agent];
-		this.lastEmittedAgents = JSON.stringify(agents);
+		this.lastEmittedAgents = listKey(agents, read?.truncated === true);
 		return {
 			ok: true,
 			data,

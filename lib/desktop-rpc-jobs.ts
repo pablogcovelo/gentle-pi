@@ -21,7 +21,9 @@ export const DESKTOP_JOBS_EVENTS = [DESKTOP_JOBS_EVENT] as const;
 // The versioned owner-service discovery seam (the jobs analogue of the usage
 // `gentle:desktop:usage-service` adapter). The schema string guards the adapter
 // against drift; the bridge ignores any responder whose shape does not match.
-export const DESKTOP_JOBS_SERVICE_SCHEMA = "gentle-pi.desktop-jobs-service/v1";
+// v2 added `truncated` to the owner read, so a v1 responder that caps the list
+// but cannot say whether it clipped is refused instead of read as complete.
+export const DESKTOP_JOBS_SERVICE_SCHEMA = "gentle-pi.desktop-jobs-service/v2";
 export const DESKTOP_JOBS_SERVICE_CHANNEL = "gentle:desktop:jobs-service";
 
 /** Upper bound on the number of jobs one list answer carries (running + recent finished). */

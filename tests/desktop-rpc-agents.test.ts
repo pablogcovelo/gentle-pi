@@ -497,6 +497,56 @@ test("cancel_subagent unknown and foreign-session ids are typed not_found", asyn
 
 // ---- Events: observer-driven transitions, dedupe and coalescing ----
 
+test("a truncated-only flip is a real change and is never suppressed", async () => {
+	let truncated = false;
+	const observers = new Set<(sessionId: string) => void>();
+	const entry = projectDesktopAgent(task("t1", "session-a"));
+	const service: DesktopAgentsService = {
+		schema: DESKTOP_AGENTS_SERVICE_SCHEMA,
+		read: () => ({ sessionId: "session-a", agents: [entry], truncated }),
+		cancel: () => ({ kind: "not_found" }),
+		observe: (onChange) => { observers.add(onChange); return () => observers.delete(onChange); },
+		dispose: () => { observers.clear(); },
+	};
+	const scheduler = recordedScheduler();
+	const bridge = new DesktopAgentsBridge({} as ExtensionAPI, { discover: async () => service, schedule: scheduler.schedule, coalesceMs: 10 });
+	bridge.attach({ sessionManager: { getSessionId: () => "session-a" } } as unknown as ExtensionContext);
+	const events: Array<{ event: string; data: Record<string, unknown> }> = [];
+	bridge.wire((event, data) => events.push({ event, data }));
+	// Discovery and the observer subscription happen on the first request.
+	assert.equal((await bridge.handle("list_subagents", {})).ok, true);
+
+	for (const observer of [...observers]) observer("session-a");
+	scheduler.flushAll();
+	assert.equal(events.length, 1);
+	assert.equal(events[0]!.data.truncated, false, "the bound is not clipped");
+
+	// The visible window is byte-identical; only the clip state moved.
+	truncated = true;
+	for (const observer of [...observers]) observer("session-a");
+	scheduler.flushAll();
+	assert.equal(events.length, 2, "a truncated-only change still delivers its own event");
+	assert.equal(events[1]!.data.truncated, true, "the client is told the list is clipped");
+});
+
+test("an owner that cannot say whether it clipped is unavailable, never complete", async () => {
+	// SAFETY: the fake deliberately answers the older v1 read shape (no
+	// `truncated`), which the published interface forbids; the cast models the
+	// stale responder the discovery seam must refuse.
+	const stale = {
+		schema: DESKTOP_AGENTS_SERVICE_SCHEMA,
+		read: () => ({ sessionId: "session-a", agents: [] }),
+		cancel: () => ({ kind: "not_found" as const }),
+		observe: () => () => {},
+		dispose: () => {},
+	} as unknown as DesktopAgentsService;
+	const bridge = new DesktopAgentsBridge({} as ExtensionAPI, { discover: async () => stale });
+	bridge.attach({ sessionManager: { getSessionId: () => "session-a" } } as unknown as ExtensionContext);
+	const outcome = await bridge.handle("list_subagents", {});
+	assert.equal(outcome.ok, false, "a list without a completeness fact is not published");
+	assert.deepEqual(await bridge.handle("list_subagents", {}), { ok: false, error: AGENTS_UNAVAILABLE });
+});
+
 test("agent-driven transitions become one coalesced agents_update filtered by active session", async () => {
 	const store = new TaskStore();
 	const { service, notify } = makeAgentsOwnerService(store, makeRunner(store), "session-a");

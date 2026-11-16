@@ -23,7 +23,9 @@ export const DESKTOP_AGENTS_EVENTS = [DESKTOP_AGENTS_EVENT] as const;
 // The versioned owner-service discovery seam (the agents analogue of the jobs
 // `gentle:desktop:jobs-service` adapter). The schema string guards the adapter
 // against drift; the bridge ignores any responder whose shape does not match.
-export const DESKTOP_AGENTS_SERVICE_SCHEMA = "gentle-pi.desktop-agents-service/v1";
+// v2 added `truncated` to the owner read, so a v1 responder that caps the list
+// but cannot say whether it clipped is refused instead of read as complete.
+export const DESKTOP_AGENTS_SERVICE_SCHEMA = "gentle-pi.desktop-agents-service/v2";
 export const DESKTOP_AGENTS_SERVICE_CHANNEL = "gentle:desktop:agents-service";
 
 /** Upper bound on the number of subagents one list answer carries (active + recent finished). */

@@ -21,7 +21,7 @@ import {
 	type DesktopJobsOwnerRead,
 	type DesktopJobsService,
 } from "./desktop-rpc-jobs.ts";
-import type { DesktopRpcOutcome } from "./desktop-rpc.ts";
+import { parseTruncatedFlag, type DesktopRpcOutcome } from "./desktop-rpc.ts";
 
 const DISCOVERY_TIMEOUT_MS = 100;
 
@@ -30,6 +30,16 @@ export interface DesktopJobsUpdateEvent {
 	jobs: DesktopJobEntry[];
 	/** Whether the owner's bound dropped entries from `jobs`. */
 	truncated: boolean;
+}
+
+/**
+ * Dedupe key for one list answer: the projected entries plus the completeness
+ * fact the event publishes. `truncated` belongs in the key because a burst can
+ * leave the visible window byte-identical while the clip state flips; keying
+ * on the entries alone would suppress that real change.
+ */
+function listKey(entries: readonly unknown[], truncated: boolean): string {
+	return JSON.stringify([entries, truncated]);
 }
 
 interface HostUiJobsRequest { context: ExtensionContext; respond(service: DesktopJobsService): void }
@@ -188,7 +198,7 @@ export class DesktopJobsBridge {
 		// A single registry change can reach the observer more than once (for
 		// example a monitor self-stop flushes its pending lines and then stops).
 		// Dedupe byte-identical projected lists so each real change emits once.
-		const key = JSON.stringify(read.jobs);
+		const key = listKey(read.jobs, read.truncated);
 		if (key === this.lastEmittedJobs) return;
 		this.lastEmittedJobs = key;
 		emit(DESKTOP_JOBS_EVENT, { jobs: read.jobs, truncated: read.truncated } satisfies DesktopJobsUpdateEvent);
@@ -204,7 +214,11 @@ export class DesktopJobsBridge {
 			if (!read || typeof read !== "object") return undefined;
 			const jobs = this.parseJobs(read.jobs);
 			if (jobs === undefined) return undefined;
-			return { sessionId: read.sessionId, jobs, truncated: read.truncated === true };
+			// A responder that cannot say whether it clipped is unusable: publishing
+			// its list would claim completeness the owner never asserted.
+			const truncated = parseTruncatedFlag(read.truncated);
+			if (truncated === undefined) return undefined;
+			return { sessionId: read.sessionId, jobs, truncated };
 		} catch {
 			// Raw owner failures carry paths and command detail; none of it crosses
 			// the contract. An unreadable owner is treated as absent.
@@ -252,7 +266,7 @@ export class DesktopJobsBridge {
 		// response line first, then one `jobs_update` with the post-action list.
 		const read = this.readOwner(service);
 		const jobs = read ? read.jobs : [job];
-		this.lastEmittedJobs = JSON.stringify(jobs);
+		this.lastEmittedJobs = listKey(jobs, read?.truncated === true);
 		return {
 			ok: true,
 			data,

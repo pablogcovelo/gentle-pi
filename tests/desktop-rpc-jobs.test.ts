@@ -137,6 +137,47 @@ function makeBridge(service: DesktopJobsService, sessionId = "session-a") {
 	return { bridge, events };
 }
 
+test("a truncated-only flip is a real change and is never suppressed", async () => {
+	let truncated = false;
+	const entry: DesktopJobEntry = { id: "job-1", label: "CI", status: "running", startedAt: 1000 };
+	const observers = new Set<(sessionId: string) => void>();
+	const service: DesktopJobsService = {
+		schema: DESKTOP_JOBS_SERVICE_SCHEMA,
+		read: () => ({ sessionId: "session-a", jobs: [entry], truncated }),
+		cancel: () => ({ kind: "not_found" }),
+		observe: (onChange) => { observers.add(onChange); return () => observers.delete(onChange); },
+		dispose: () => { observers.clear(); },
+	};
+	const { bridge, events } = makeBridge(service);
+	// Discovery and the observer subscription happen on the first request.
+	assert.equal((await bridge.handle("list_jobs", {})).ok, true);
+
+	for (const observer of [...observers]) observer("session-a");
+	assert.equal(events.length, 1);
+	assert.equal(events[0]!.data.truncated, false, "the bound is not clipped");
+
+	// The visible window is byte-identical; only the clip state moved.
+	truncated = true;
+	for (const observer of [...observers]) observer("session-a");
+	assert.equal(events.length, 2, "a truncated-only change still delivers its own event");
+	assert.equal(events[1]!.data.truncated, true, "the client is told the list is clipped");
+});
+
+test("an owner that cannot say whether it clipped is unavailable, never complete", async () => {
+	// SAFETY: the fake deliberately answers the older v1 read shape (no
+	// `truncated`), which the published interface forbids; the cast models the
+	// stale responder the discovery seam must refuse.
+	const stale = {
+		schema: DESKTOP_JOBS_SERVICE_SCHEMA,
+		read: () => ({ sessionId: "session-a", jobs: [] }),
+		cancel: () => ({ kind: "not_found" as const }),
+		observe: () => () => {},
+		dispose: () => {},
+	} as unknown as DesktopJobsService;
+	const { bridge } = makeBridge(stale);
+	assert.deepEqual(await bridge.handle("list_jobs", {}), { ok: false, error: JOBS_UNAVAILABLE });
+});
+
 // ---- Pure contract: projection and params ----
 
 test("projectDesktopJob keeps only the whitelist and never command/cwd/path/tail", () => {
