@@ -109,6 +109,7 @@ test("the Desktop transport advertises session_state_changed after the existing 
 		"profile_applied",
 		"agents_update",
 		"session_state_changed",
+		"review_mode_changed",
 	]);
 });
 
