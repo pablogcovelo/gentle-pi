@@ -482,10 +482,10 @@ test("S9: the snapshot lists the session's slash commands: pi's built-ins first,
 	const items = snapshot.commands.items;
 	assert.deepEqual(items.slice(0, DESKTOP_FEED_BUILTIN_COMMANDS.length).map((item) => item.source), DESKTOP_FEED_BUILTIN_COMMANDS.map(() => "builtin"));
 	assert.deepEqual(items.slice(DESKTOP_FEED_BUILTIN_COMMANDS.length), [
-		{ name: "gentle:status", description: "Show the Gentle status", args: null, terminal: true, source: "extension" },
-		{ name: "review", description: `${"x".repeat(DESKTOP_FEED_LIMITS.commandText - 1)}…`, args: null, terminal: false, source: "prompt" },
-		{ name: "skill:odd", description: null, args: null, terminal: false, source: "skill" },
-		{ name: "badname", description: "control characters", args: null, terminal: true, source: "extension" },
+		{ name: "gentle:status", description: "Show the Gentle status", args: null, terminal: true, runnable: false, source: "extension" },
+		{ name: "review", description: `${"x".repeat(DESKTOP_FEED_LIMITS.commandText - 1)}…`, args: null, terminal: false, runnable: false, source: "prompt" },
+		{ name: "skill:odd", description: null, args: null, terminal: false, runnable: false, source: "skill" },
+		{ name: "badname", description: "control characters", args: null, terminal: true, runnable: false, source: "extension" },
 	], "the desktop RPC channel and nameless entries are left out; prompts and skills answer in the chat");
 	assert.equal(snapshot.commands.truncated, false);
 	const many = buildDesktopFeedSnapshot(fixtureInput({ commands: Array.from({ length: 400 }, (_, i) => ({ name: `c${i}`, description: "d", source: "extension" as const })) }));
@@ -503,6 +503,29 @@ test("S9: session operations are listed with the screen they open", () => {
 	assert.equal(byName.has("quit"), false, "quitting the session is typed, never one click away");
 });
 
+test("run-command: runnable declares exactly the commands run_command executes", () => {
+	// odd/tasks/desktop-run-command.md T1 + S4a: runnable is a declared fact,
+	// never inferred from source or terminal — true for exactly the seven names
+	// the host's run_command mapping executes; scoped-models is never runnable
+	// (pi exposes scoping only as the read-only ctx.scopedModels snapshot).
+	const byName = new Map(DESKTOP_FEED_BUILTIN_COMMANDS.map((command) => [command.name, command]));
+	assert.deepEqual(DESKTOP_FEED_BUILTIN_COMMANDS.filter((command) => command.runnable).map((command) => command.name).sort(), ["compact", "model", "name", "new", "reload", "resume", "thinking"]);
+	for (const [name, command] of byName) {
+		if (["new", "resume", "compact", "reload", "model", "thinking", "name"].includes(name)) assert.equal(command.runnable, true, name);
+		else assert.equal(command.runnable, false, name);
+	}
+	const snapshot = buildDesktopFeedSnapshot(fixtureInput({
+		commands: [
+			{ name: "gentle:status", description: "Show the Gentle status", source: "extension" },
+			{ name: "review", description: "plan", source: "prompt" },
+			{ name: "skill:odd", description: undefined, source: "skill" },
+		],
+	}));
+	for (const item of snapshot.commands.items.filter((item) => item.source !== "builtin")) {
+		assert.equal(item.runnable, false, `${item.name} (${item.source}) is never runnable`);
+	}
+});
+
 test("S9: every listed built-in is one pi really has", async () => {
 	// pi keeps the list out of its exports: read it next to the package entry.
 	const entry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
@@ -518,7 +541,7 @@ test("S9: the extension publishes pi's command registry and keeps working withou
 	];
 	await h.start();
 	const extension = h.read().commands.items.filter((item) => item.source !== "builtin");
-	assert.deepEqual(extension, [{ name: "gentle:changes", description: "Open the changes panel", args: null, terminal: true, source: "extension" }]);
+	assert.deepEqual(extension, [{ name: "gentle:changes", description: "Open the changes panel", args: null, terminal: true, runnable: false, source: "extension" }]);
 	assert.ok(!readFileSync(h.file, "utf8").includes("/secret/ext.ts"), "source paths never reach the snapshot");
 	const bare = feedHarness(t);
 	await bare.start();

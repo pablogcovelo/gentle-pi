@@ -180,7 +180,7 @@ test("installed Pi dispatches Desktop RPC without adding conversation messages",
 		assert.equal(response.kind, "response");
 		assert.equal(response.requestId, "real-1");
 		assert.equal(response.ok, true);
-		assert.deepEqual(response.data.methods, ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "get_job_output", "apply_profile", "list_subagents", "cancel_subagent", "get_subagent_thread", "get_worktree_changes", "mcp_status", "get_active_profile", "tool_vocabulary", "list_sessions", "switch_session", "get_changes", "get_change_diff", "get_review_mode", "set_review_mode", "get_usage_stats", "get_update_status"]);
+		assert.deepEqual(response.data.methods, ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "get_job_output", "apply_profile", "list_subagents", "cancel_subagent", "get_subagent_thread", "get_worktree_changes", "mcp_status", "get_active_profile", "tool_vocabulary", "list_sessions", "switch_session", "get_changes", "get_change_diff", "get_review_mode", "set_review_mode", "get_usage_stats", "get_update_status", "run_command"]);
 		assert.deepEqual(response.data.events, ["config_changed", "permission_mode_changed", "rate_limit", "design_canvas", "jobs_update", "profile_applied", "agents_update", "session_state_changed", "review_mode_changed"]);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
@@ -446,6 +446,58 @@ test("installed Pi serves offline update status without a lookup and without pat
 		assert.equal(payloads.some((payload) => payload.kind === "event"), false, "a read emits nothing");
 		const wire = JSON.stringify(payloads);
 		assert.equal(wire.includes(root) || wire.includes(JSON.stringify(root).slice(1, -1)), false, "no absolute path leaks into the wire");
+
+		const closed = await probe.close();
+		assert.equal(closed.status, 0, closed.stderr);
+		assert.equal(closed.stderr, "");
+	} finally {
+		probe.kill();
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+/**
+ * `run_command` against the installed runtime: the closed answer set over the
+ * host's real catalog. Only refusals and a harmless rename are executed — a
+ * replacement (`new`, `resume`) is covered by the sessions probes above, and
+ * `login` is refused before anything opens.
+ */
+test("installed Pi answers run_command with the closed executed set", async () => {
+	const root = isolatedRoot("desktop-rpc-run-command-");
+	const probe = new LiveProbe(root, [desktopExtension]);
+	try {
+		const responseFor = (requestId: string) => probe.waitFor(
+			(record) => record.type === "extension_ui_request" && record.widgetKey === DESKTOP_RPC_WIDGET &&
+				JSON.parse(record.widgetLines[0]).kind === "response" &&
+				JSON.parse(record.widgetLines[0]).requestId === requestId,
+			`response ${requestId}`,
+		).then((record) => JSON.parse(record.widgetLines[0]));
+
+		// A name outside pi's catalog.
+		probe.send(prompt("prompt-unknown", desktopRequest("run-unknown", "run_command", { name: "definitely-not-a-command" })));
+		const unknownCommand = await responseFor("run-unknown");
+		assert.equal(unknownCommand.ok, true, JSON.stringify(unknownCommand));
+		assert.deepEqual(unknownCommand.data, { executed: false, reason: "unknown_command" });
+
+		// A real command whose execution lives in the TUI: refused before anything opens.
+		probe.send(prompt("prompt-login", desktopRequest("run-login", "run_command", { name: "login" })));
+		const login = await responseFor("run-login");
+		assert.deepEqual(login.data, { executed: false, reason: "terminal_only" });
+
+		// A real execution through pi's own API: the session name.
+		probe.send(prompt("prompt-name", desktopRequest("run-name", "run_command", { name: "name", args: "Probe" })));
+		const named = await responseFor("run-name");
+		assert.deepEqual(named.data, { executed: true }, JSON.stringify(named));
+
+		// Malformed parameters answer the transport's invalid_request, never the executed set.
+		probe.send(prompt("prompt-bad", desktopRequest("run-bad", "run_command", { name: 7 })));
+		const malformed = await responseFor("run-bad");
+		assert.equal(malformed.ok, false);
+		assert.equal(malformed.error.code, "invalid_request");
+
+		const wire = JSON.stringify(probe.desktopPayloads());
+		assert.equal(wire.includes(JSON.stringify(root).slice(1, -1)), false, "no absolute path crosses the wire");
+		assert.equal(probe.desktopPayloads().some((payload) => payload.kind === "event"), false, "run_command emits no event");
 
 		const closed = await probe.close();
 		assert.equal(closed.status, 0, closed.stderr);

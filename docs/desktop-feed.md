@@ -82,7 +82,7 @@ gone or that were not updated for a day. The folder is created `0700` and files
 | `stats` | `turns`, `toolCalls`, `toolErrors`, `cost`, token counts, `cacheHitRate`, `durationMs`, `models[]` |
 | `activity` | `state` (`working`, `waiting`, `blocked`, `idle`), `streaming`, ODD `phase` and `phaseLabel`, `blockedLabel`; S15: `agents` and `jobs` (the session's subagents and background jobs that still run, the same numbers as `agents.active` and `jobs.running`) and `label`, the words every desktop region shows: "Working · 2 agents" while the turn runs, "Waiting on 2 agents · 1 job" once the turn ended but that work still runs (`waiting`, never `idle`), the blocker's label, else "Idle". Background subagents are the agents owner's, not the jobs registry's: they count in `agents`, never in `jobs` |
 | `pendingQuestion` | the open question or `null` (below) |
-| `commands` | the session's slash commands for the desktop palette and the composer's `/` menu: `items[]` (`name`, `description`, `args`, `terminal`, `source`) and `truncated` (below) |
+| `commands` | the session's slash commands for the desktop palette and the composer's `/` menu: `items[]` (`name`, `description`, `args`, `terminal`, `runnable`, `source`) and `truncated` (below) |
 
 `pendingQuestion.kind` is `choice` (`ask_user_choice`), `questionnaire`
 (`ask_user_question`), `prompt` (an extension dialog: `promptKind` is `select`,
@@ -112,7 +112,16 @@ away), then pi's command registry in its own order: extension commands
 when the command answers with a screen of the TUI (a picker, a panel, a status
 report), so the desktop shows the Terminal after sending it; prompt templates and
 skills answer in the conversation. `args` names the argument a command needs
-(`/name <name>`): the desktop puts it in the composer instead of sending it. The
+(`/name <name>`): the desktop puts it in the composer instead of sending it.
+`runnable` is `true` exactly when the desktop can call the RPC's `run_command`
+with this `name` (plus `args` when the entry documents them) and expect
+`executed: true` — today `new`, `resume`, `compact`, `reload`, `model`,
+`thinking` and `name`. It is a fact the host declares, never
+derivable from `source` or `terminal`, and it is `false` for every other built-in
+(`scoped-models` included: pi exposes model scoping only as the read-only
+`ctx.scopedModels` snapshot, so the host could not keep the promise) and for
+every `extension`, `prompt` and `skill` entry, whose execution lives in
+pi's TUI. The
 desktop RPC's own `gentle:desktop` channel is never listed; source paths never
 reach the file.
 

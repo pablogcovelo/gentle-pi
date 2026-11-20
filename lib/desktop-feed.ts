@@ -74,35 +74,43 @@ export const DESKTOP_FEED_QUESTION_TOOLS = ["ask_user_choice", "ask_user_questio
  * `terminal`: the command shows its result or a picker in the TUI, so the
  * desktop shows the Terminal after sending it. `args`: the command needs an
  * argument, so the desktop puts it in the composer instead of sending it.
+ * `runnable` (odd/tasks/desktop-run-command.md S2): the client may call the
+ * Desktop RPC's `run_command` with this name — plus `args` where the entry
+ * documents them — and expect `executed: true`. It is a fact the host declares,
+ * never derived from `source` or `terminal`; extension commands, prompt
+ * templates and skills are never runnable.
  */
-export const DESKTOP_FEED_BUILTIN_COMMANDS: ReadonlyArray<{ name: string; description: string; args: string | null; terminal: boolean }> = [
-	{ name: "new", description: "Start a new session", args: null, terminal: false },
-	{ name: "resume", description: "Resume another session", args: null, terminal: true },
-	{ name: "fork", description: "Create a new fork from a previous user message", args: null, terminal: true },
-	{ name: "clone", description: "Duplicate the current session at the current position", args: null, terminal: false },
-	{ name: "tree", description: "Navigate session tree (switch branches)", args: null, terminal: true },
-	{ name: "compact", description: "Manually compact the session context", args: null, terminal: true },
-	{ name: "name", description: "Set session display name", args: "<name>", terminal: false },
-	{ name: "export", description: "Export session (HTML default, or specify path: .html/.jsonl)", args: null, terminal: true },
-	{ name: "session", description: "Show session info and stats", args: null, terminal: true },
-	{ name: "copy", description: "Copy last agent message to clipboard", args: null, terminal: false },
-	{ name: "model", description: "Select model (opens selector UI)", args: null, terminal: true },
-	{ name: "thinking", description: "Set thinking level", args: null, terminal: true },
-	{ name: "scoped-models", description: "Enable/disable models for Ctrl+P cycling", args: null, terminal: true },
-	{ name: "settings", description: "Open settings menu", args: null, terminal: true },
-	{ name: "hotkeys", description: "Show all keyboard shortcuts", args: null, terminal: true },
-	{ name: "reload", description: "Reload keybindings, extensions, skills, prompts, themes, and context files", args: null, terminal: true },
-	{ name: "import", description: "Import a JSONL session, preserving its ID and working directory", args: null, terminal: true },
-	{ name: "share", description: "Share session via a Radius artifact or a GitHub gist", args: null, terminal: true },
-	{ name: "changelog", description: "Show changelog entries", args: null, terminal: true },
-	{ name: "trust", description: "Save project trust decision for future sessions", args: null, terminal: true },
-	{ name: "login", description: "Configure provider authentication", args: null, terminal: true },
-	{ name: "logout", description: "Remove provider authentication", args: null, terminal: true },
-	{ name: "bug", description: "Report a bug to the Pi developers", args: "<description>", terminal: true },
+export const DESKTOP_FEED_BUILTIN_COMMANDS: ReadonlyArray<{ name: string; description: string; args: string | null; terminal: boolean; runnable: boolean }> = [
+	{ name: "new", description: "Start a new session", args: null, terminal: false, runnable: true },
+	{ name: "resume", description: "Resume another session", args: null, terminal: true, runnable: true },
+	{ name: "fork", description: "Create a new fork from a previous user message", args: null, terminal: true, runnable: false },
+	{ name: "clone", description: "Duplicate the current session at the current position", args: null, terminal: false, runnable: false },
+	{ name: "tree", description: "Navigate session tree (switch branches)", args: null, terminal: true, runnable: false },
+	{ name: "compact", description: "Manually compact the session context", args: null, terminal: true, runnable: true },
+	{ name: "name", description: "Set session display name", args: "<name>", terminal: false, runnable: true },
+	{ name: "export", description: "Export session (HTML default, or specify path: .html/.jsonl)", args: null, terminal: true, runnable: false },
+	{ name: "session", description: "Show session info and stats", args: null, terminal: true, runnable: false },
+	{ name: "copy", description: "Copy last agent message to clipboard", args: null, terminal: false, runnable: false },
+	{ name: "model", description: "Select model (opens selector UI)", args: null, terminal: true, runnable: true },
+	{ name: "thinking", description: "Set thinking level", args: null, terminal: true, runnable: true },
+	{ name: "scoped-models", description: "Enable/disable models for Ctrl+P cycling", args: null, terminal: true, runnable: false },
+	// S4a: scoped-models is never runnable — pi exposes model scoping only as the
+	// read-only `ctx.scopedModels` snapshot, so the host could not keep an
+	// `executed: true` promise for it.
+	{ name: "settings", description: "Open settings menu", args: null, terminal: true, runnable: false },
+	{ name: "hotkeys", description: "Show all keyboard shortcuts", args: null, terminal: true, runnable: false },
+	{ name: "reload", description: "Reload keybindings, extensions, skills, prompts, themes, and context files", args: null, terminal: true, runnable: true },
+	{ name: "import", description: "Import a JSONL session, preserving its ID and working directory", args: null, terminal: true, runnable: false },
+	{ name: "share", description: "Share session via a Radius artifact or a GitHub gist", args: null, terminal: true, runnable: false },
+	{ name: "changelog", description: "Show changelog entries", args: null, terminal: true, runnable: false },
+	{ name: "trust", description: "Save project trust decision for future sessions", args: null, terminal: true, runnable: false },
+	{ name: "login", description: "Configure provider authentication", args: null, terminal: true, runnable: false },
+	{ name: "logout", description: "Remove provider authentication", args: null, terminal: true, runnable: false },
+	{ name: "bug", description: "Report a bug to the Pi developers", args: "<description>", terminal: true, runnable: false },
 ];
 
 /** The desktop RPC's own machine channel: not a command a person runs. */
-const HIDDEN_COMMANDS = new Set(["gentle:desktop"]);
+export const HIDDEN_COMMANDS = new Set(["gentle:desktop"]);
 
 /** One entry of pi's command registry (`pi.getCommands()`), as far as the snapshot reads it. */
 export interface DesktopFeedCommandInput {
@@ -297,7 +305,7 @@ export interface DesktopFeedSnapshot {
 	 * their result in the TUI (`terminal`); prompts and skills answer in the chat.
 	 */
 	commands: {
-		items: Array<{ name: string; description: string | null; args: string | null; terminal: boolean; source: "builtin" | "extension" | "prompt" | "skill" }>;
+		items: Array<{ name: string; description: string | null; args: string | null; terminal: boolean; runnable: boolean; source: "builtin" | "extension" | "prompt" | "skill" }>;
 		truncated: boolean;
 	};
 }
@@ -601,7 +609,7 @@ function shapeCommands(registry: readonly DesktopFeedCommandInput[]): DesktopFee
 		if (items.length >= DESKTOP_FEED_LIMITS.commands) { truncated = true; break; }
 		seen.add(name);
 		const source = command.source === "prompt" || command.source === "skill" ? command.source : "extension";
-		items.push({ name, description: optionalText(command.description, DESKTOP_FEED_LIMITS.commandText), args: null, terminal: source === "extension", source });
+		items.push({ name, description: optionalText(command.description, DESKTOP_FEED_LIMITS.commandText), args: null, terminal: source === "extension", runnable: false, source });
 	}
 	return { items, truncated };
 }

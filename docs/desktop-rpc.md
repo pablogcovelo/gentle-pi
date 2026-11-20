@@ -62,14 +62,64 @@ Returns the currently implemented contract; clients must not infer support from 
   "schema": "gentle-shell.desktop-rpc/v1",
   "command": "gentle:desktop",
   "widget": "gentle-desktop-rpc",
-  "methods": ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "get_job_output", "apply_profile", "list_subagents", "cancel_subagent", "get_subagent_thread", "get_worktree_changes", "mcp_status", "get_active_profile", "tool_vocabulary", "list_sessions", "switch_session", "get_changes", "get_change_diff", "get_review_mode", "set_review_mode", "get_usage_stats", "get_update_status"],
+  "methods": ["capabilities", "get_snapshot", "get_config", "set_config", "get_permission_mode", "set_permission_mode", "get_subscription_usage", "refresh_subscription_usage", "get_design_canvas", "list_jobs", "cancel_job", "get_job_output", "apply_profile", "list_subagents", "cancel_subagent", "get_subagent_thread", "get_worktree_changes", "mcp_status", "get_active_profile", "tool_vocabulary", "list_sessions", "switch_session", "get_changes", "get_change_diff", "get_review_mode", "set_review_mode", "get_usage_stats", "get_update_status", "run_command"],
   "events": ["config_changed", "permission_mode_changed", "rate_limit", "design_canvas", "jobs_update", "profile_applied", "agents_update", "session_state_changed", "review_mode_changed", "session_snapshot"]
 }
 ```
 
-The permission methods, the bounded config read and write, the subscription-usage read and refresh, the design-canvas read, the background-jobs list, cancel, and output read, the profile apply, the subagents list, cancel, and thread read, the review-mode read and change, the cross-session usage-stats read, the update-status read, and the `config_changed`, `permission_mode_changed`, `rate_limit`, `design_canvas`, `jobs_update`, `profile_applied`, `agents_update`, and `review_mode_changed` events are advertised because this extension wires them. `set_config` and `config_changed` are advertised only because the config bridge actually implements that writer — advertising is not a forward-looking wish list. The design slice advertises exactly its one read method and its one transition event, not the canvas `open`/`stop` actions, which stay the `gentle_design` tool's job. The jobs slice advertises exactly its list, cancel, and output-read methods and its one registry-change event, not the `bash_background`/`monitor` start tools, which stay agent tools. The profiles slice advertises exactly its one apply method and its one applied event; profile edits stay `set_config`. The subagents slice advertises exactly its list, cancel, and thread-read methods and its one transition event, not the agent dispatch tools, which stay agent tools. `session_snapshot` is the one entry that depends on the session: it is listed only while the feed owner seam (`extensions/gentle-desktop-feed.ts`) is wired for this session, and absent otherwise; the `get_snapshot` method itself is always listed. The review slice advertises exactly its read and change methods and its one change event; review start, skip, and consent stay terminal-only. The stats slice advertises exactly its one read method and no event: usage stats are an explicit read. The updates slice advertises exactly its one read method and no event; running an update stays the launcher's job. Method availability is not a claim that every dependency is loaded — see [Permission limits](#permission-limits), [Configuration limits](#configuration-limits), [Usage limits](#usage-limits), [Design limits](#design-limits), [Jobs limits](#jobs-limits), [Profiles limits](#profiles-limits), [Subagents limits](#subagents-limits), [Review limits](#review-limits), [Stats limits](#stats-limits), and [Updates limits](#updates-limits).
+The permission methods, the bounded config read and write, the subscription-usage read and refresh, the design-canvas read, the background-jobs list, cancel, and output read, the profile apply, the subagents list, cancel, and thread read, the review-mode read and change, the cross-session usage-stats read, the update-status read, and the `config_changed`, `permission_mode_changed`, `rate_limit`, `design_canvas`, `jobs_update`, `profile_applied`, `agents_update`, and `review_mode_changed` events are advertised because this extension wires them. `set_config` and `config_changed` are advertised only because the config bridge actually implements that writer — advertising is not a forward-looking wish list. The design slice advertises exactly its one read method and its one transition event, not the canvas `open`/`stop` actions, which stay the `gentle_design` tool's job. The jobs slice advertises exactly its list, cancel, and output-read methods and its one registry-change event, not the `bash_background`/`monitor` start tools, which stay agent tools. The profiles slice advertises exactly its one apply method and its one applied event; profile edits stay `set_config`. The subagents slice advertises exactly its list, cancel, and thread-read methods and its one transition event, not the agent dispatch tools, which stay agent tools. `session_snapshot` is the one entry that depends on the session: it is listed only while the feed owner seam (`extensions/gentle-desktop-feed.ts`) is wired for this session, and absent otherwise; the `get_snapshot` method itself is always listed. The review slice advertises exactly its read and change methods and its one change event; review start, skip, and consent stay terminal-only. The stats slice advertises exactly its one read method and no event: usage stats are an explicit read. The updates slice advertises exactly its one read method and no event; running an update stays the launcher's job. The commands slice advertises exactly its one execution method and no event: it runs the catalog `get_snapshot.commands` publishes, and refuses what pi's TUI owns. Method availability is not a claim that every dependency is loaded — see [Permission limits](#permission-limits), [Configuration limits](#configuration-limits), [Usage limits](#usage-limits), [Design limits](#design-limits), [Jobs limits](#jobs-limits), [Profiles limits](#profiles-limits), [Subagents limits](#subagents-limits), [Review limits](#review-limits), [Stats limits](#stats-limits), [Updates limits](#updates-limits), and [Commands limits](#commands-limits).
 
-The additional worktree, MCP inventory, active-profile and tool-vocabulary reads are also advertised. `session_state_changed` is a separate push-only event at settled state changes; it does not add a polling method. See their method, event, and limits sections below.
+The additional worktree, MCP inventory, active-profile and tool-vocabulary reads are also advertised. `session_state_changed` is a separate push-only event at settled state changes; it does not add a polling method. See their method, event, and limits sections below. The commands slice advertises exactly its one execution method and no event: the catalog still lives in `get_snapshot.commands`, and every name `run_command` cannot execute is refused, never guessed.
+
+### `run_command`
+
+Executes one command of the session's own catalog — the same list `get_snapshot.commands` publishes — with the authority of pi's command context and extension API. The client never keeps its own command list, and this method never sends model text: what it can run is exactly what the host declares `runnable: true` in the feed's `commands` section (see `docs/desktop-feed.md`).
+
+```json
+{ "schema": "gentle-shell.desktop-rpc/v1", "requestId": "desktop-81", "method": "run_command", "params": { "name": "resume", "args": "/home/dev/.pi/agent/sessions/2026-11-17.jsonl" } }
+```
+
+| Param | Required | Values | Meaning |
+| --- | --- | --- | --- |
+| `name` | yes | a catalog name (without the leading `/`) | A name in the host's catalog: a built-in, an extension command, a prompt template, or a skill. |
+| `args` | no | string | The command's argument (`resume`'s session file, `model`'s `provider/id`, `thinking`'s level, `name`'s display name). |
+
+Any other key, a non-string `name` or `args`, an empty `name`, or a name longer than 128 characters is rejected as `invalid_request` before anything runs.
+
+Success:
+
+```json
+{ "schema": "gentle-shell.desktop-rpc/v1", "kind": "response", "requestId": "desktop-81", "ok": true, "data": { "executed": true } }
+```
+
+A refusal is still a success response with a closed two-value reason set — it never uses the error channel:
+
+```json
+{ "schema": "gentle-shell.desktop-rpc/v1", "kind": "response", "requestId": "desktop-82", "ok": true, "data": { "executed": false, "reason": "terminal_only" } }
+```
+
+| Reason | Meaning |
+| --- | --- |
+| `terminal_only` | The command exists in the catalog, but its execution lives in pi's TUI: the host has no API for it, the required capability is missing in this pi build, the needed `args` are absent, or the execution itself failed. |
+| `unknown_command` | The name is not in the host's catalog. |
+
+The execution mapping is the host's own (S4):
+
+| Command | Execution |
+| --- | --- |
+| `new` | `ctx.newSession()` — the session is replaced; the answer is published from the replacement session, correlated by the original `requestId`, like `switch_session`'s. |
+| `resume` | `ctx.switchSession(args)` with the received `args`; a missing or empty `args` answers `terminal_only` — choosing the session stays the client's own selection flow (`list_sessions`). |
+| `compact` | `ctx.compact()` — pi's own fire-and-forget compaction; its outcome surfaces through the session's compact events. |
+| `reload` | `ctx.reload()` — the runtime is replaced; the answer is published before the replacement and the reload promise is not awaited. |
+| `model` | `pi.setModel` with the model `args` names, resolved through the session's model registry (`provider/id`, or a bare `id`); an unknown model or a refused set (no authentication) answers `terminal_only`. |
+| `thinking` | `pi.setThinkingLevel` with `args` clamped to pi's levels (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). |
+| `name` | `pi.setSessionName(args)`. |
+| every other built-in (`settings`, `hotkeys`, `changelog`, `copy`, `share`, `bug`, `trust`, `quit`, `login`, `logout`, `import`, `export`, `tree`, `fork`, `clone`, `session`) | `terminal_only` |
+| extension commands and `prompt`/`skill` entries | `terminal_only` |
+
+Two catalog facts are stated as the contract. `scoped-models` is never runnable (S4a): pi exposes a session's scoped models only as the read-only snapshot `ctx.scopedModels`, with no API to change them, so the feed declares it `runnable: false` and `run_command` answers `terminal_only` — scoped-model selection stays in the Terminal. And `/quit` is deliberately absent from the feed's wire catalog, yet it is still refused as `terminal_only`, never `unknown_command`.
+
+A catalog name never throws: a missing capability in an older pi, a refused execution, and a failed call all answer `terminal_only`. While a `new` or `resume` replacement is in flight, every other request is answered at once with the retryable `session_switching`, exactly as for `switch_session`. The method emits no event.
 
 ### `get_snapshot`
 
@@ -2044,6 +2094,14 @@ The event rides the same router sequencer as every other event: `seq` keeps the 
 - **Memory only.** A refresh result is kept in this Pi process's memory and answers later plain reads (across a session switch too); it is never written, so the launcher's own cache and its startup notice are unchanged.
 - **Gaps stated.** Pi's latest version is known only in a bundled install. Package `latest` is always `null`. A git package has no `current`. `gentle-ai-managed` is detected only when the running gentle-pi is the `npm:gentle-pi` package Pi installed.
 - **Read only, no event.** This slice has exactly one method and no event, and it never runs an update.
+
+## Commands limits
+
+- **One catalog, no second list.** The commands live in the feed's `get_snapshot.commands` section (`docs/desktop-feed.md`), built from pi's built-ins and `pi.getCommands()`. `run_command` recognizes exactly that catalog (plus `/quit`, which the feed keeps off the wire); there is no second registry, no cache, and no name table of its own. A name the catalog does not list is `unknown_command`, and every catalog name without an execution mapping is `terminal_only` — including `scoped-models`, which pi exposes only as the read-only `ctx.scopedModels` snapshot (S4a: never runnable), and every extension command, prompt template, and skill, whose execution lives in pi's TUI.
+- **Host authority, never model text.** The execution is pi's own command-context calls (`ctx.newSession`, `ctx.switchSession`, `ctx.compact`, `ctx.reload`) and extension API setters (`pi.setModel`, `pi.setThinkingLevel`, `pi.setSessionName`). Nothing is sent to the model, nothing is spawned, and no file is written.
+- **Capability gaps are answers, not failures.** Every capability is checked before use, so an older pi build answers `terminal_only` for a name it cannot execute instead of throwing; a catalog name never rejects and never throws. A refused or failed execution is also `terminal_only`: the closed reason set carries no third value, and the host never reports a guessed success.
+- **Replacements follow the switch rules.** `new` and `resume` replace the session: the answer is published from the replacement session through pi's `withSession`, correlated by the original `requestId`, and every other request is gated with `session_switching` until it settles — the same contract `switch_session` already defines. `reload` replaces the runtime; its answer is published before the replacement and the reload promise is not awaited.
+- **No event.** This slice has exactly one method and no event. State changes the executed commands cause (a new session, a renamed session, a compaction) surface through the events the other slices already publish.
 
 ## Worktree limits
 
