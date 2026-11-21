@@ -509,6 +509,144 @@ test("installed Pi answers run_command with the closed executed set", async () =
 });
 
 /**
+ * The session-replacing `run_command` answers
+ * (`odd/tasks/desktop-run-command-switch-answer.md`): `new` and `resume` replace
+ * the session in-child, so the request that triggered the switch is answered by
+ * the replacement exactly once, and the session keeps serving requests
+ * afterwards instead of staying behind the `session_switching` gate.
+ */
+test("installed Pi answers a session-replacing run_command once and keeps serving after it", async () => {
+	const root = isolatedRoot("desktop-rpc-run-command-switch-");
+	const workspace = join(root, "workspace");
+	const seeded = Date.UTC(2026, 10, 2);
+	const header = { type: "session", version: 3, id: "probe-resume", timestamp: new Date(seeded).toISOString(), cwd: workspace };
+	const message = {
+		type: "message",
+		id: "probe-r1",
+		parentId: null,
+		timestamp: new Date(seeded + 1000).toISOString(),
+		message: { role: "user", content: [{ type: "text", text: "resume me" }], timestamp: seeded + 1000 },
+	};
+	const seededPath = join(root, "sessions", "2026-11-02T00-00-00-000Z_probe-resume.jsonl");
+	writeFileSync(seededPath, `${JSON.stringify(header)}\n${JSON.stringify(message)}\n`);
+	const probe = new LiveProbe(root, [desktopExtension]);
+	try {
+		const responseFor = (requestId: string) => probe.waitFor(
+			(record) => record.type === "extension_ui_request" && record.widgetKey === DESKTOP_RPC_WIDGET &&
+				JSON.parse(record.widgetLines[0]).kind === "response" &&
+				JSON.parse(record.widgetLines[0]).requestId === requestId,
+			`response ${requestId}`,
+		).then((record) => JSON.parse(record.widgetLines[0]));
+		const answers = (requestId: string) => probe.desktopPayloads().filter((payload) => payload.kind === "response" && payload.requestId === requestId);
+
+		// `resume` selects a session file through the host's own `switchSession`.
+		probe.send(prompt("prompt-run-resume", desktopRequest("run-resume", "run_command", { name: "resume", args: seededPath })));
+		const resumed = await responseFor("run-resume");
+		assert.deepEqual(resumed.data, { executed: true }, JSON.stringify(resumed));
+
+		// The replacement session answers new requests: no lingering gate.
+		probe.send(prompt("prompt-snapshot-1", desktopRequest("snapshot-1", "get_snapshot")));
+		const snapshot = await responseFor("snapshot-1");
+		assert.equal(snapshot.ok, true, JSON.stringify(snapshot));
+		assert.equal(snapshot.data.sequence, 0, "the replacement session's router starts a fresh sequence");
+
+		// `new` takes the same path and answers from its own replacement.
+		probe.send(prompt("prompt-run-new", desktopRequest("run-new", "run_command", { name: "new" })));
+		const created = await responseFor("run-new");
+		assert.deepEqual(created.data, { executed: true }, JSON.stringify(created));
+
+		probe.send(prompt("prompt-snapshot-2", desktopRequest("snapshot-2", "get_snapshot")));
+		assert.equal((await responseFor("snapshot-2")).ok, true, "the created session serves requests too");
+
+		for (const id of ["run-resume", "run-new", "snapshot-1", "snapshot-2"]) {
+			assert.equal(answers(id).length, 1, `exactly one response for ${id}`);
+		}
+		assert.equal(
+			JSON.stringify(probe.desktopPayloads()).includes("session_switching"),
+			false,
+			"the triggering requests are never refused as switching",
+		);
+
+		const closed = await probe.close();
+		assert.equal(closed.status, 0, closed.stderr);
+		assert.equal(closed.stderr, "");
+	} finally {
+		probe.kill();
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+/**
+ * Live evidence for every executable catalog name the Desktop can reach, sent
+ * exactly as the GUI sends it: `args` only for `resume` (see
+ * `odd/tasks/desktop-run-command-switch-answer.md` T5). The closed answer set
+ * over pi's real catalog: `compact` and `thinking` (with a level) execute
+ * through the extension API; `name`, `model`, and `thinking` without args need
+ * a Terminal choice; `fork` and `scoped-models` live in pi's TUI; and a
+ * `resume` path that does not exist is refused, never a throw. `reload` is
+ * probed last (L9/T6): it answers once before it replaces the runtime, and a
+ * `get_snapshot` sent after it must be served by the replacement. One request
+ * at a time, no provider call, no network.
+ */
+test("installed Pi answers every desktop-reachable run_command name without args as cataloged", async () => {
+	const root = isolatedRoot("desktop-rpc-run-command-names-");
+	const probe = new LiveProbe(root, [desktopExtension]);
+	try {
+		const responseFor = (requestId: string) => probe.waitFor(
+			(record) => record.type === "extension_ui_request" && record.widgetKey === DESKTOP_RPC_WIDGET &&
+				JSON.parse(record.widgetLines[0]).kind === "response" &&
+				JSON.parse(record.widgetLines[0]).requestId === requestId,
+			`response ${requestId}`,
+		).then((record) => JSON.parse(record.widgetLines[0]));
+
+		// Sent one at a time in the order the audit lists them: every request
+		// waits for its own answer before the next is sent.
+		const terminalOnly = { executed: false, reason: "terminal_only" };
+		const cases: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
+			["run-compact", { name: "compact" }, { executed: true }],
+			["run-name-noargs", { name: "name" }, terminalOnly],
+			["run-model-noargs", { name: "model" }, terminalOnly],
+			["run-thinking-noargs", { name: "thinking" }, terminalOnly],
+			["run-thinking-low", { name: "thinking", args: "low" }, { executed: true }],
+			["run-fork", { name: "fork" }, terminalOnly],
+			["run-scoped-models", { name: "scoped-models" }, terminalOnly],
+			["run-resume-bad", { name: "resume", args: "/definitely/not/a/session.jsonl" }, terminalOnly],
+			// Last: the reload replaces the runtime in-child, so every case after
+			// it would run in the replacement session.
+			["run-reload", { name: "reload" }, { executed: true }],
+		];
+		for (const [requestId, params, expected] of cases) {
+			probe.send(prompt(`prompt-${requestId}`, desktopRequest(requestId, "run_command", params)));
+			const answer = await responseFor(requestId);
+			assert.equal(answer.ok, true, JSON.stringify(answer));
+			assert.deepEqual(answer.data, expected, JSON.stringify(answer));
+		}
+
+		// The replacement session the reload started keeps serving requests.
+		probe.send(prompt("prompt-snapshot-after-reload", desktopRequest("snapshot-after-reload", "get_snapshot")));
+		const afterReload = await responseFor("snapshot-after-reload");
+		assert.equal(afterReload.ok, true, JSON.stringify(afterReload));
+		assert.equal(afterReload.data.sequence, 0, "the replacement session's router starts a fresh sequence");
+
+		const payloads = probe.desktopPayloads();
+		for (const [requestId] of cases) {
+			assert.equal(payloads.filter((payload) => payload.kind === "response" && payload.requestId === requestId).length, 1, `exactly one response for ${requestId}`);
+		}
+		assert.equal(payloads.some((payload) => payload.kind === "event"), false, "run_command emits no event");
+		const wire = JSON.stringify(payloads);
+		assert.equal(wire.includes(JSON.stringify(root).slice(1, -1)), false, "no absolute path crosses the wire");
+		assert.equal(wire.includes("definitely/not/a/session.jsonl"), false, "a refused resume never echoes its path");
+
+		const closed = await probe.close();
+		assert.equal(closed.status, 0, closed.stderr);
+		assert.equal(closed.stderr, "");
+	} finally {
+		probe.kill();
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+/**
  * Real production wiring for the subagents slice: the installed runtime loads
  * the actual agents owner (`extensions/gentle-agents.ts`, which owns the single
  * parent-session `TaskStore` plus the parent `AgentRunner`) alongside this
