@@ -6,14 +6,19 @@
 // is published from the replacement session through `withSession`, correlated
 // by the original requestId, and the in-flight token lets the transport gate
 // concurrent requests (`session_switching`). `compact` is pi's own
-// fire-and-forget call; `reload` replaces the runtime, so its promise is not
-// awaited and the answer is published before the replacement. `model`,
+// fire-and-forget call; `reload` replaces the runtime, so its answer is
+// settled through the router first and only then is the reload itself invoked
+// (odd/tasks/desktop-run-command-switch-answer.md L9). `model`,
 // `thinking`, and `name` are the extension API's own setters. Every other
 // catalog name — including `scoped-models`, which is never runnable (S4a: pi
 // exposes model scoping only as the read-only `ctx.scopedModels` snapshot) —
 // answers `terminal_only`; a name the host catalog does not list answers
 // `unknown_command`. A catalog name never throws: a missing capability, a
-// refused execution, and a failed call all answer `terminal_only`.
+// refused execution, and a failed call all answer `terminal_only` — except
+// `reload`, whose answer has to cross the wire before the invocation replaces
+// the runtime that would publish it: there `executed` means "reload
+// scheduled", and a failure discovered afterwards is never retracted
+// (docs/desktop-rpc.md, Commands limits).
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -150,10 +155,17 @@ export class DesktopCommandsBridge {
 	/**
 	 * The answer a replacement publishes from the session pi started in place of
 	 * this one; the router that would otherwise answer was stopped with it.
+	 *
+	 * Published only when the generation CHANGED: pi tears the session down
+	 * before it runs `withSession`, so `session_shutdown` has always reset this
+	 * slice by then. The polarity is `switch_session`'s own
+	 * (`lib/desktop-sessions-service.ts`); comparing it the other way drops every
+	 * session-replacing `run_command` answer and leaves the request that
+	 * triggered the switch unanswered.
 	 */
 	private publishReplacement(next: ReplacedPublishContext, generation: number, requestId: string | null): Promise<void> {
 		return (async () => {
-			if (generation !== this.generation || requestId === null) return;
+			if (generation === this.generation || requestId === null) return;
 			try {
 				// SAFETY: the published data is the constant `{ executed: true }`, a
 				// plain record by construction.
@@ -224,16 +236,25 @@ export class DesktopCommandsBridge {
 	private runReload(host: CommandsHost): DesktopRpcOutcome {
 		const reload = host.reload;
 		if (!isCallable(reload)) return answered(TERMINAL_ONLY);
-		try {
-			// A reload tears this runtime down, so the promise is not awaited: the
-			// answer is published before the replacement, and a failed reload does
-			// not retract it.
-			const pending = reload.call(host) as unknown;
-			const promise = pending as Promise<void> | undefined;
-			if (promise && typeof promise.catch === "function") promise.catch(() => {});
-		} catch {
-			return answered(TERMINAL_ONLY);
-		}
+		// Defect L9 (odd/tasks/desktop-run-command-switch-answer.md): invoking the
+		// reload inside this answer's path let its teardown fire `session_shutdown`
+		// — which resets this slice and stops the router — before the router could
+		// publish the outcome, so `run_command {name:"reload"}` answered nothing
+		// and the desktop waited forever. The invocation is therefore moved out of
+		// the answer's path: the closed answer is returned now and the router
+		// settles first (a macrotask runs only after every pending promise
+		// continuation, including the router's publish), and the reload then runs
+		// out of band — wrapped so a throwing or rejecting reload can never become
+		// a second answer or an unhandled rejection.
+		setTimeout(() => {
+			try {
+				const pending = reload.call(host) as unknown;
+				const promise = pending as Promise<void> | undefined;
+				if (promise && typeof promise.catch === "function") promise.catch(() => {});
+			} catch {
+				/* a failed reload cannot retract the answer already published */
+			}
+		}, 0);
 		return answered(EXECUTED);
 	}
 

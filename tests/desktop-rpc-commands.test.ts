@@ -80,19 +80,26 @@ test("the contract is one method, no event, with closed params", () => {
 // ---- S4: the eight executable names ----
 
 test("new replaces the session and the replacement answers with executed: true", async () => {
+	// Pi tears the old session down before it runs `withSession` —
+	// `session_shutdown` resets this slice and bumps its generation — so the fake
+	// fires that reset first. The answer can only come from the replacement
+	// after it, and it must arrive exactly once.
 	const publishes: string[] = [];
 	let withSession: ((next: Replacement) => Promise<void>) | undefined;
+	const instance = new DesktopCommandsBridge(fakePi().pi);
 	const host = fakeHost({
 		newSession: async (options: { withSession?: (next: Replacement) => Promise<void> }) => {
+			instance.reset();
 			withSession = options?.withSession;
 			if (withSession) await withSession({ ui: { setWidget: (_key: string, lines: string[]) => publishes.push(...lines) } });
 			return { cancelled: false };
 		},
 	});
-	const { pi } = fakePi();
-	const response = await bridge(host, pi).handle("run_command", { name: "new" }, "run-new");
+	instance.attach(host as never);
+	const response = await instance.handle("run_command", { name: "new" }, "run-new");
 	assert.deepEqual(response, { ok: true, data: { executed: true } });
 	assert.equal(typeof withSession, "function", "the answer is published from the replacement session");
+	assert.equal(publishes.length, 1, "the triggering request is answered exactly once");
 	assert.deepEqual(JSON.parse(publishes[0]!), {
 		schema: DESKTOP_RPC_SCHEMA,
 		kind: "response",
@@ -100,6 +107,23 @@ test("new replaces the session and the replacement answers with executed: true",
 		ok: true,
 		data: { executed: true },
 	});
+});
+
+test("a replacement that never tore the session down publishes nothing", async () => {
+	// The other side of the same condition: with no teardown the generation is
+	// unchanged, the router still owns this request, and a second line from
+	// `withSession` would be a duplicate answer.
+	const publishes: string[] = [];
+	const instance = new DesktopCommandsBridge(fakePi().pi);
+	const host = fakeHost({
+		newSession: async (options: { withSession?: (next: Replacement) => Promise<void> }) => {
+			if (options?.withSession) await options.withSession({ ui: { setWidget: (_key: string, lines: string[]) => publishes.push(...lines) } });
+			return { cancelled: false };
+		},
+	});
+	instance.attach(host as never);
+	assert.deepEqual(await instance.handle("run_command", { name: "new" }, "run-new-kept"), { ok: true, data: { executed: true } });
+	assert.equal(publishes.length, 0, "without a teardown the router stays the only answer");
 });
 
 test("resume switches to the session file the args name", async () => {
@@ -127,12 +151,35 @@ test("compact triggers the host's compaction", async () => {
 	assert.equal(called, 1);
 });
 
-test("reload triggers the host's reload", async () => {
+test("reload answers first and only then triggers the host's reload", async () => {
 	let called = 0;
+	const instance = new DesktopCommandsBridge(fakePi().pi);
 	const host = fakeHost({ reload: async () => { called += 1; } });
-	const { pi } = fakePi();
-	assert.deepEqual(await bridge(host, pi).handle("run_command", { name: "reload" }, "run-reload"), { ok: true, data: { executed: true } });
-	assert.equal(called, 1, "the reload promise is not awaited");
+	instance.attach(host as never);
+	const outcome = instance.handle("run_command", { name: "reload" }, "run-reload");
+	assert.equal(called, 0, "the reload is not invoked inside the answer's synchronous path");
+	assert.deepEqual(await outcome, { ok: true, data: { executed: true } });
+	// The deferred invocation is a macrotask: even the settled answer's promise
+	// chain cannot run the reload anymore, so a synchronous teardown can no
+	// longer swallow the answer (odd/tasks/desktop-run-command-switch-answer.md L9).
+	assert.equal(called, 0, "the reload still has not run when the answer is settled");
+	await new Promise((settle) => setTimeout(settle, 0));
+	assert.equal(called, 1, "the reload does run, out of band, after the answer");
+});
+
+test("a throwing or rejecting reload still answers executed once, with no unhandled rejection", async () => {
+	// The documented contract for `reload` (docs/desktop-rpc.md, Commands limits):
+	// the answer must cross the wire before the invocation replaces the runtime
+	// that would publish it, so `executed` means "reload scheduled" and a failure
+	// discovered after scheduling is not retracted. A missing capability is still
+	// `terminal_only`, because that check happens before anything is scheduled.
+	for (const reload of [() => { throw new Error("boom"); }, async () => { throw new Error("boom"); }, () => Promise.reject(new Error("boom"))]) {
+		const host = fakeHost({ reload });
+		assert.deepEqual(await bridge(host, fakePi().pi).handle("run_command", { name: "reload" }, "run-reload"), { ok: true, data: { executed: true } });
+	}
+	// The out-of-band invocations run inside this test; node:test fails a test
+	// on any unhandled rejection, and the wrapped reload produces none.
+	await new Promise((settle) => setTimeout(settle, 0));
 });
 
 test("model resolves the provider/id args through the session's registry and sets it", async () => {
@@ -237,7 +284,9 @@ test("a capability that throws answers terminal_only and never throws out", asyn
 		[{ name: "new" }, fakeHost({ newSession: async () => { throw new Error("boom"); } }), throwing],
 		[{ name: "resume", args: "/s/gone.jsonl" }, fakeHost({ switchSession: async () => { throw new Error("gone"); } }), throwing],
 		[{ name: "compact" }, fakeHost({ compact: () => { throw new Error("boom"); } }), throwing],
-		[{ name: "reload" }, fakeHost({ reload: () => { throw new Error("boom"); } }), throwing],
+		// `reload` is not in this loop: its invocation is deferred out of the
+		// answer's path (L9), so a throwing reload answers `executed` — the
+		// dedicated test above covers it.
 		[{ name: "model", args: "anthropic/claude-opus-5-5" }, fakeHost({ modelRegistry: { find: () => { throw new Error("boom"); }, getAll: () => { throw new Error("boom"); } } }), throwing],
 		[{ name: "thinking", args: "high" }, fakeHost(), (() => { const { pi } = fakePi(); (pi as unknown as Record<string, unknown>).setThinkingLevel = () => { throw new Error("boom"); }; return pi; })()],
 		[{ name: "name", args: "Feed" }, fakeHost(), (() => { const { pi } = fakePi(); (pi as unknown as Record<string, unknown>).setSessionName = () => { throw new Error("boom"); }; return pi; })()],

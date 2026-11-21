@@ -136,7 +136,14 @@ export default function desktopRpc(pi: ExtensionAPI, options: DesktopRpcExtensio
 	});
 	const commands = new DesktopCommandsBridge(pi);
 	const domain: DesktopRpcDomain = (method, params) => {
-		const sessionsOutcome = sessionList.handle(method, params, dispatchingRequestId);
+		// The requestId of the request being dispatched, captured synchronously.
+		// The fall-through below awaits other bridges first, and the command
+		// handler has already cleared the shared binding by then; a
+		// session-replacing `run_command` needs it to keep its own request out of
+		// `abandonPending` and to publish its answer from the replacement
+		// (odd/tasks/desktop-run-command-switch-answer.md).
+		const requestId = dispatchingRequestId;
+		const sessionsOutcome = sessionList.handle(method, params, requestId);
 		if (sessionsOutcome !== undefined) return sessionsOutcome;
 		// Config and tools are synchronous bridges; permission, usage, design, jobs,
 		// profiles, agents, changes, review, stats, and updates answers are awaited in fall-through order, so an unknown
@@ -171,7 +178,7 @@ export default function desktopRpc(pi: ExtensionAPI, options: DesktopRpcExtensio
 			if (reviewOutcome !== undefined) return reviewOutcome;
 			const statsOutcome = await stats.handle(method, params);
 			if (statsOutcome !== undefined) return statsOutcome;
-			const commandsOutcome = await commands.handle(method, params, dispatchingRequestId);
+			const commandsOutcome = await commands.handle(method, params, requestId);
 			if (commandsOutcome !== undefined) return commandsOutcome;
 			return updates.handle(method, params);
 		})();
